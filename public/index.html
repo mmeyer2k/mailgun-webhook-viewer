@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mailgun Webhook Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Mailgun Webhook Manager</h1>
+        
+        <div class="search-form">
+            <div class="form-group">
+                <input type="text" id="recipient" placeholder="Search by recipient" onkeyup="handleEnterKey(event)">
+                <input type="text" id="subject" placeholder="Search by subject" onkeyup="handleEnterKey(event)">
+                <select id="event" onchange="searchWebhooks()">
+                    <option value="">All Events</option>
+                    <option value="accepted">Accepted</option>
+                    <option value="delivered">Delivered</option>
+                    <option value="opened">Opened</option>
+                    <option value="clicked">Clicked</option>
+                    <option value="unsubscribed">Unsubscribed</option>
+                    <option value="complained">Spam Complaints</option>
+                    <option value="permanent_fail">Permanent Failure</option>
+                    <option value="temporary_fail">Temporary Failure</option>
+                </select>
+                <input type="date" id="startDate" onkeyup="handleEnterKey(event)">
+                <input type="date" id="endDate" onkeyup="handleEnterKey(event)">
+                <button onclick="searchWebhooks()">Search</button>
+                <button onclick="clearSearch()" class="clear-button">Clear</button>
+            </div>
+        </div>
+
+        <div class="webhooks-list" id="webhooksList"></div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+    <script src="js/events.js"></script>
+</body>
+</html> 

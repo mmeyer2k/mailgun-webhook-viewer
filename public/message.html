@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Details - Mailgun Webhook Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="/" class="back-link" id="backLink">← Back to Webhooks</a>
+            <h1>
+                <span id="eventType" class="event-badge">Loading...</span>
+                <span id="eventTitle">Email Event Details</span>
+            </h1>
+        </div>
+        
+        <div class="message-details" id="messageDetails">
+            <div class="message-header">
+                <h2 id="subject">Loading...</h2>
+                <div class="meta-info">
+                    <p>From: <span id="from"></span></p>
+                    <p>To: <span id="to"></span></p>
+                    <p>Message ID: <span id="messageId"></span></p>
+                </div>
+            </div>
+
+            <div class="message-timeline">
+                <h3>Message Timeline</h3>
+                <div class="timeline" id="timeline"></div>
+            </div>
+
+            <div class="message-content">
+                <div class="content-tabs">
+                    <button class="tab-button active" onclick="showTab('html')">HTML</button>
+                    <button class="tab-button" onclick="showTab('plain')">Plain Text</button>
+                    <button class="tab-button" onclick="showTab('raw')">Raw Data</button>
+                </div>
+                
+                <div id="htmlContent" class="content-panel active">
+                    <iframe id="htmlFrame" sandbox="allow-same-origin"></iframe>
+                </div>
+                
+                <div id="plainContent" class="content-panel">
+                    <pre id="plainText"></pre>
+                </div>
+                
+                <div id="rawContent" class="content-panel">
+                    <pre id="rawData"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="js/message.js"></script>
+</body>
+</html> 
