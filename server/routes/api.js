@@ -4,7 +4,7 @@ const Webhook = require('../models/webhook');
 
 router.get('/webhooks', async (req, res) => {
   try {
-    const { event, recipient, subject, startDate, endDate, page = 1, limit = 50 } = req.query;
+    const { event, recipient, subject, startDate, endDate, page = 1, limit = 20 } = req.query;
     
     const query = {};
     if (event) query.event = event;
@@ -42,7 +42,8 @@ router.get('/webhooks/:id', async (req, res) => {
     
     // Fetch all related events by messageId
     const relatedEvents = await Webhook.find({
-      'message.headers.messageId': webhook.message.headers.messageId
+      'message.headers.message-id': webhook.message?.headers?.['message-id'],
+      _id: { $ne: webhook._id }
     }).sort({ timestamp: 1 });
 
     res.json({

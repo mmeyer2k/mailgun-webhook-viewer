@@ -6,15 +6,31 @@ const Webhook = require('../models/webhook');
 // Webhook signature verification
 const verifyWebhookSignature = (timestamp, token, signature) => {
   const signingKey = process.env.MAILGUN_SIGNING_KEY;
-  // Temporarily disabled for testing
-  return true;
 
-  const encodedToken = crypto
-    .createHmac('sha256', signingKey)
-    .update(timestamp.concat(token))
-    .digest('hex');
+  // Ensure all required parameters are present
+  if (!timestamp || !token || !signature || !signingKey) {
+    console.error('Missing signature parameters:', { timestamp, token, signature, hasKey: !!signingKey });
+    return false;
+  }
 
-  return encodedToken === signature;
+  try {
+    const encodedToken = crypto
+      .createHmac('sha256', signingKey)
+      .update(timestamp.concat(token))
+      .digest('hex');
+
+    const isValid = encodedToken === signature;
+    if (!isValid) {
+      console.error('Signature mismatch:', { 
+        expected: signature,
+        calculated: encodedToken
+      });
+    }
+    return isValid;
+  } catch (error) {
+    console.error('Error verifying signature:', error);
+    return false;
+  }
 };
 
 router.post('/', async (req, res) => {
@@ -27,39 +43,7 @@ router.post('/', async (req, res) => {
 
     const eventData = req.body['event-data'];
     
-    const webhook = new Webhook({
-      event: eventData.event,
-      timestamp: new Date(eventData.timestamp * 1000),
-      eventId: eventData.id,
-      recipient: eventData.recipient,
-      message: {
-        headers: {
-          messageId: eventData['message-id'],
-          subject: eventData.subject,
-          from: eventData.from,
-          to: eventData.to
-        }
-      },
-      tags: eventData.tags || [],
-      clientInfo: eventData['client-info'] ? {
-        clientName: eventData['client-info']['client-name'],
-        clientType: eventData['client-info']['client-type'],
-        userAgent: eventData['client-info']['user-agent'],
-        deviceType: eventData['client-info']['device-type'],
-        clientOs: eventData['client-info']['client-os'],
-        bot: eventData['client-info'].bot
-      } : undefined,
-      geolocation: eventData.geolocation,
-      delivery: eventData.delivery,
-      storage: eventData.storage,
-      reason: eventData.reason,
-      signature: {
-        timestamp,
-        token,
-        signature
-      },
-      rawData: req.body
-    });
+    const webhook = new Webhook(eventData);
 
     await webhook.save();
     res.status(200).json({ message: 'Webhook received and stored' });

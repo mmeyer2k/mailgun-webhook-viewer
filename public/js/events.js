@@ -33,6 +33,9 @@ async function searchWebhooks(page = 1) {
         const data = await response.json();
         displayWebhooks(data.webhooks);
         displayPagination(data.pages);
+        
+        // Add this new line to display total results
+        document.getElementById('totalResults').textContent = `Total Results: ${data.total}`;
     } catch (error) {
         console.error('Error fetching webhooks:', error);
     }

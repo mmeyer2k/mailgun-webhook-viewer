@@ -48,79 +48,23 @@ async function loadMessage() {
         eventTitle.textContent = titles[webhook.event] || 'Email Event Details';
         document.title = `${titles[webhook.event]} - Mailgun Webhook Manager`;
 
-        // Add event-specific details section after the meta-info
-        const metaInfo = document.querySelector('.meta-info');
-        const eventDetails = document.createElement('div');
-        eventDetails.className = 'event-details';
-        eventDetails.innerHTML = generateEventDetails(webhook);
-        metaInfo.parentNode.insertBefore(eventDetails, metaInfo.nextSibling);
-
         // Update metadata
         document.getElementById('subject').textContent = webhook.message?.headers?.subject || 'No Subject';
         document.getElementById('from').textContent = webhook.message?.headers?.from || 'N/A';
         document.getElementById('to').innerHTML = webhook.message?.headers?.to ? 
             `<a href="/?recipient=${encodeURIComponent(webhook.message.headers.to)}" class="recipient-link">${webhook.message.headers.to}</a>` : 
             'N/A';
-        document.getElementById('messageId').textContent = webhook.message?.headers?.messageId || 'N/A';
-
-        // Display timeline
-        displayTimeline(relatedEvents);
-
-        // Get content from webhook data
-        const htmlContent = webhook.rawData['event-data']?.message?.['body-html'];
-        const plainContent = webhook.rawData['event-data']?.message?.['body-plain'];
-
-        // Show/hide tabs based on content
-        const contentTabs = document.querySelector('.content-tabs');
-        const htmlTab = document.querySelector('[onclick="showTab(\'html\')"]');
-        const plainTab = document.querySelector('[onclick="showTab(\'plain\')"]');
-        const rawTab = document.querySelector('[onclick="showTab(\'raw\')"]');
-
-        // Hide HTML tab if no HTML content
-        if (!htmlContent) {
-            htmlTab.style.display = 'none';
-        }
-
-        // Hide Plain Text tab if no plain text content
-        if (!plainContent) {
-            plainTab.style.display = 'none';
-        }
-
-        // If neither HTML nor plain text, select raw tab by default
-        if (!htmlContent && !plainContent) {
-            showTab('raw');
-        }
-
-        // Set content
-        const htmlFrame = document.getElementById('htmlFrame');
-        htmlFrame.srcdoc = htmlContent;
-
-        document.getElementById('plainText').textContent = 
-            plainContent || '';
+        document.getElementById('messageId').textContent = webhook.message?.headers?.['message-id'] || 'N/A';
         
-        document.getElementById('rawData').textContent = 
-            JSON.stringify(webhook.rawData, null, 2);
+        // Add back timeline display
+        displayTimeline(relatedEvents);
+        
+        // Display raw data
+        document.getElementById('rawData').textContent = JSON.stringify(webhook, null, 2);
 
     } catch (error) {
         console.error('Error loading message:', error);
     }
-}
-
-function showTab(tabName) {
-    console.log('Switching to tab:', tabName); // Add debug logging
-    // Hide all panels
-    document.querySelectorAll('.content-panel').forEach(panel => {
-        panel.classList.remove('active');
-    });
-    
-    // Deactivate all tabs
-    document.querySelectorAll('.tab-button').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    
-    // Show selected panel and activate tab
-    document.getElementById(`${tabName}Content`).classList.add('active');
-    document.querySelector(`[onclick="showTab('${tabName}')"]`).classList.add('active');
 }
 
 // Load message on page load
@@ -131,7 +75,7 @@ function displayTimeline(events) {
     timeline.innerHTML = events.map(event => `
         <div class="timeline-event ${event.event} ${event._id === messageId ? 'current' : ''}"
              onclick="window.location.href='/message.html?id=${event._id}&event=${event.event}&${getSearchParamsFromUrl()}'">
-            <div class="timeline-time">${new Date(event.timestamp).toLocaleString()}</div>
+            <div class="timeline-time">${new Date(event.timestamp * 1000).toLocaleString()}</div>
             <div class="timeline-event-type">${event.event.toUpperCase()}</div>
             ${getEventDetails(event)}
         </div>

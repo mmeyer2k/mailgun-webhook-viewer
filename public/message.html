@@ -31,24 +31,9 @@
                 <div class="timeline" id="timeline"></div>
             </div>
 
-            <div class="message-content">
-                <div class="content-tabs">
-                    <button class="tab-button active" onclick="showTab('html')">HTML</button>
-                    <button class="tab-button" onclick="showTab('plain')">Plain Text</button>
-                    <button class="tab-button" onclick="showTab('raw')">Raw Data</button>
-                </div>
-                
-                <div id="htmlContent" class="content-panel active">
-                    <iframe id="htmlFrame" sandbox="allow-same-origin"></iframe>
-                </div>
-                
-                <div id="plainContent" class="content-panel">
-                    <pre id="plainText"></pre>
-                </div>
-                
-                <div id="rawContent" class="content-panel">
-                    <pre id="rawData"></pre>
-                </div>
+            <div class="raw-data">
+                <h3>Raw Data</h3>
+                <pre id="rawData"></pre>
             </div>
         </div>
     </div>

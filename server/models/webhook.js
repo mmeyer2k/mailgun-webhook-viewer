@@ -8,26 +8,15 @@ const webhookSchema = new mongoose.Schema({
     enum: ['accepted', 'delivered', 'opened', 'clicked', 'unsubscribed', 'complained', 'failed', 'permanent_fail', 'temporary_fail']
   },
   timestamp: {
-    type: Date,
-    default: Date.now,
+    type: Number,
     index: true
   },
-  eventId: {   // Mailgun's event ID (unique within a day)
-    type: String,
-    index: true
-  },
-  recipient: {
-    type: String,
-    required: true,
-    index: true
-  },
+  id: String,
+  recipient: String,
   message: {
     headers: {
-      messageId: String,
-      subject: {
-        type: String,
-        index: true
-      },
+      'message-id': String,
+      subject: String,
       from: String,
       to: String
     }
@@ -62,7 +51,6 @@ const webhookSchema = new mongoose.Schema({
     token: String,
     signature: String
   },
-  rawData: Object
 }, { timestamps: true });
 
 // Compound index for timestamp-based sorting with filters

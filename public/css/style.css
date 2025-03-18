@@ -217,7 +217,7 @@ details summary {
 .timeline-event {
     position: relative;
     margin-left: 70px;
-    padding: 10px;
+    padding: 15px;
     margin-bottom: 15px;
     background: white;
     border: 1px solid #dee2e6;
@@ -225,8 +225,8 @@ details summary {
     cursor: pointer;
     transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .timeline-event::before {
@@ -252,11 +252,11 @@ details summary {
 .timeline-time {
     color: #666;
     font-size: 0.9em;
-    margin-bottom: 5px;
+    margin: 0;
 }
 
 .timeline-details {
-    margin-top: 5px;
+    margin: 0;
     font-size: 0.9em;
     color: #666;
 }
@@ -320,4 +320,19 @@ details summary {
 .recipient-link:hover {
     text-decoration: underline;
     cursor: pointer;
+}
+
+.total-results {
+    margin-top: 10px;
+    text-align: center;
+    color: #666;
+    font-size: 0.9em;
+}
+
+/* Add this new class for the event header */
+.timeline-event-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
 } 
