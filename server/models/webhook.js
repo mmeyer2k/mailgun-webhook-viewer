@@ -46,11 +46,6 @@ const webhookSchema = new mongoose.Schema({
     key: String
   },
   reason: String,
-  signature: {
-    timestamp: String,
-    token: String,
-    signature: String
-  },
 }, { timestamps: true });
 
 // Compound index for timestamp-based sorting with filters

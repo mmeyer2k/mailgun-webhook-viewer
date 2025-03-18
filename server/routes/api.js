@@ -42,8 +42,7 @@ router.get('/webhooks/:id', async (req, res) => {
     
     // Fetch all related events by messageId
     const relatedEvents = await Webhook.find({
-      'message.headers.message-id': webhook.message?.headers?.['message-id'],
-      _id: { $ne: webhook._id }
+      'message.headers.message-id': webhook.message.headers['message-id'],
     }).sort({ timestamp: 1 });
 
     res.json({
