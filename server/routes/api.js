@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const ipCheckMiddleware = require('../middleware/ipCheck');
 const Webhook = require('../models/webhook');
+
+// Apply IP check middleware to all GET routes
+router.get('*', ipCheckMiddleware);
 
 router.get('/webhooks', async (req, res) => {
   try {

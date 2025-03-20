@@ -12,11 +12,16 @@ services:
       - mongodb
     volumes:
       - .:/usr/src/app
-      - /usr/src/app/node_modules
     command: npm run dev
+    logging: &logging
+      driver: "json-file"
+      options:
+        max-size: "50k"
+        max-file: "1"
 
   mongodb:
     image: mongo:latest
+    logging: *logging
     ports:
       - "27017:27017"
     volumes:
@@ -24,6 +29,7 @@ services:
 
   mongo-express:
     image: mongo-express:latest
+    logging: *logging
     ports:
       - "127.0.0.1:8081:8081"
     environment:

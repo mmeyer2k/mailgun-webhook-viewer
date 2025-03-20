@@ -50,10 +50,10 @@ router.post('/', async (req, res) => {
     await webhook.save();
 
     const messageId = eventData.message.headers['message-id'];
-    const existingMessage = await Message.findOne({ messageId: messageId });
+    const existingEvent = await Message.findOne({ messageId: messageId });
 
     // Download and store message content if URL exists
-    if (eventData.storage?.url && !existingMessage) {
+    if (eventData.storage?.url && !existingEvent) {
       try {
         const response = await axios.get(eventData.storage.url, {
           auth: {
@@ -68,15 +68,12 @@ router.post('/', async (req, res) => {
 
         // Store message content
         if (Object.keys(response.data).includes("body-html")) {
-          await Message.findOneAndUpdate(
-            { messageId: messageId },
-            response.data,
-            { upsert: true, new: true }
-          );
+          const message = new Message(response.data);
+          message.save;
         }
       } catch (error) {
-        console.error('Error downloading/parsing message: ', error);
-        res.status(500).json({ error: 'Error downloading/parsing message' });
+        console.error('Error downloading/parsing event: ', error);
+        res.status(500).json({ error: 'Error downloading/parsing event' });
         return;
       }
     }
