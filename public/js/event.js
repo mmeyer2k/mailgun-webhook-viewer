@@ -74,7 +74,7 @@ function displayTimeline(events) {
     const timeline = document.getElementById('timeline');
     timeline.innerHTML = events.map(event => `
         <div class="timeline-event ${event.event} ${event._id === messageId ? 'current' : ''}"
-             onclick="window.location.href='/message.html?id=${event._id}&event=${event.event}&${getSearchParamsFromUrl()}'">
+             onclick="window.location.href='/event.html?id=${event._id}&event=${event.event}&${getSearchParamsFromUrl()}'">
             <div class="timeline-time">${new Date(event.timestamp * 1000).toLocaleString()}</div>
             <div class="timeline-event-type">${event.event.toUpperCase()}</div>
             ${getEventDetails(event)}

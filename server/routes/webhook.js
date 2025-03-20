@@ -49,8 +49,11 @@ router.post('/', async (req, res) => {
     const webhook = new Webhook(eventData);
     await webhook.save();
 
+    const messageId = eventData.message.headers['message-id'];
+    const existingMessage = await Message.findOne({ messageId: messageId });
+
     // Download and store message content if URL exists
-    if (eventData.storage?.url) {
+    if (eventData.storage?.url && !existingMessage) {
       try {
         const response = await axios.get(eventData.storage.url, {
           auth: {
@@ -59,15 +62,18 @@ router.post('/', async (req, res) => {
           }
         });
 
+        if (!response.data) {
+          throw new Error('No data received from Mailgun API');
+        }
+
         // Store message content
-        await Message.findOneAndUpdate(
-          { messageId: eventData.message.headers['message-id'] },
-          {
-            messageId: eventData.message.headers['message-id'],
-            ...response.data,
-          },
-          { upsert: true, new: true }
-        );
+        if (Object.keys(response.data).includes("body-html")) {
+          await Message.findOneAndUpdate(
+            { messageId: messageId },
+            response.data,
+            { upsert: true, new: true }
+          );
+        }
       } catch (error) {
         console.error('Error downloading/parsing message: ', error);
         res.status(500).json({ error: 'Error downloading/parsing message' });

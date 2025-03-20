@@ -46,7 +46,7 @@ function displayWebhooks(webhooks) {
     webhooksList.innerHTML = webhooks.map(webhook => `
         <div class="webhook-item">
             <div class="webhook-header">
-                <a href="/message.html?id=${webhook._id}&event=${webhook.event}&${getSearchParams()}">${webhook.event.toUpperCase()}</a>
+                <a href="/event.html?id=${webhook._id}&event=${webhook.event}&${getSearchParams()}">${webhook.event.toUpperCase()}</a>
                 <span class="webhook-meta">
                     ${new Date(webhook.timestamp).toLocaleString()} | 
                     ${webhook.recipient} |
