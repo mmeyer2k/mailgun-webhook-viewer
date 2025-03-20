@@ -11,7 +11,9 @@ services:
     depends_on:
       - mongodb
     volumes:
-      - .:/usr/src/app
+      - ./public:/usr/src/app/public
+      - ./server:/usr/src/app/server
+      - ./.env:/usr/src/app/.env
     command: npm run dev
     logging: &logging
       driver: "json-file"

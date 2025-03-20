@@ -3,6 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const ipCheckMiddleware = require('./middleware/ipCheck');
 
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
@@ -12,6 +13,11 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Apply IP check to all GET requests for static files
+app.get('/*', ipCheckMiddleware);
+
+// Serve static files after IP check
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Connect to MongoDB
