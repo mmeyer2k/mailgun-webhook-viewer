@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Details</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="javascript:history.back()" class="back-link">← Back</a>
+            <h1>Message Details</h1>
+        </div>
+
+        <div class="message-header">
+            <div class="meta-info">
+                <div>
+                    <strong>Message ID:</strong>
+                    <div id="messageId"></div>
+                </div>
+                <div>
+                    <strong>Subject:</strong>
+                    <div id="subject"></div>
+                </div>
+                <div>
+                    <strong>From:</strong>
+                    <div id="from"></div>
+                </div>
+                <div>
+                    <strong>To:</strong>
+                    <div id="to"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-tabs">
+            <button class="tab-button active" onclick="showContent('html')">HTML Content</button>
+            <button class="tab-button" onclick="showContent('text')">Plain Text</button>
+        </div>
+
+        <div id="htmlContent" class="content-panel active">
+            <iframe id="htmlFrame" sandbox="allow-same-origin"></iframe>
+        </div>
+
+        <div id="textContent" class="content-panel">
+            <pre id="plainText"></pre>
+        </div>
+    </div>
+    <script src="js/message.js"></script>
+</body>
+</html> 

@@ -2,9 +2,20 @@ const express = require('express');
 const router = express.Router();
 const ipCheckMiddleware = require('../middleware/ipCheck');
 const Webhook = require('../models/webhook');
+const Message = require('../models/message');
 
-// Apply IP check middleware to all GET routes
-router.get('*', ipCheckMiddleware);
+// Add message details route
+router.get('/messages/:id', async (req, res) => {
+  try {
+    const message = await Message.findOne({ messageId: req.params.id });
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    res.json(message);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching message' });
+  }
+});
 
 router.get('/webhooks', async (req, res) => {
   try {

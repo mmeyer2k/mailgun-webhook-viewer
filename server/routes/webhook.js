@@ -68,8 +68,8 @@ router.post('/', async (req, res) => {
 
         // Store message content
         if (Object.keys(response.data).includes("body-html")) {
-          const message = new Message(response.data);
-          message.save;
+          const message = new Message({...response.data, messageId});
+          await message.save();
         }
       } catch (error) {
         console.error('Error downloading/parsing event: ', error);

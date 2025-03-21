@@ -88,12 +88,15 @@ button:hover {
     display: flex;
     align-items: center;
     margin-bottom: 30px;
+    flex-wrap: wrap;
+    gap: 15px;
 }
 
 .back-link {
     text-decoration: none;
     color: #007bff;
     margin-right: 20px;
+    white-space: nowrap;
 }
 
 .message-header {
@@ -101,12 +104,31 @@ button:hover {
     padding: 20px;
     border-radius: 4px;
     margin-bottom: 20px;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
 }
 
 .meta-info {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 15px;
+}
+
+.meta-info div {
+    overflow: hidden;
+}
+
+.meta-info strong {
+    display: block;
+    margin-bottom: 5px;
+    white-space: nowrap;
+}
+
+.meta-info div div {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-all;
+    min-width: 0;
 }
 
 .content-tabs {

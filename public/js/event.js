@@ -54,7 +54,12 @@ async function loadMessage() {
         document.getElementById('to').innerHTML = webhook.message?.headers?.to ? 
             `<a href="/?recipient=${encodeURIComponent(webhook.message.headers.to)}" class="recipient-link">${webhook.message.headers.to}</a>` : 
             'N/A';
-        document.getElementById('messageId').textContent = webhook.message?.headers?.['message-id'] || 'N/A';
+        
+        // Make message ID clickable
+        const msgId = webhook.message?.headers?.['message-id'];
+        document.getElementById('messageId').innerHTML = msgId ? 
+            `<a href="/message.html?id=${encodeURIComponent(msgId)}" class="message-link">${msgId}</a>` : 
+            'N/A';
         
         // Add back timeline display
         displayTimeline(relatedEvents);
