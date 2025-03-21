@@ -44,29 +44,49 @@ async function searchWebhooks(page = 1) {
 function displayWebhooks(webhooks) {
     const webhooksList = document.getElementById('webhooksList');
     webhooksList.innerHTML = webhooks.map(webhook => `
-        <div class="webhook-item">
-            <div class="webhook-header">
-                <a href="/event.html?id=${webhook._id}&event=${webhook.event}&${getSearchParams()}">${webhook.event.toUpperCase()}</a>
-                <span class="webhook-meta">
-                    ${new Date(webhook.timestamp).toLocaleString()} | 
-                    ${webhook.recipient} |
-                    ${webhook.message?.headers?.subject || 'No Subject'}
-                </span>
+        <a href="/event.html?id=${webhook._id}&event=${webhook.event}&${getSearchParams()}" class="webhook-link">
+            <div class="webhook-item ${webhook.event}">
+                <div class="webhook-header">
+                    <div class="webhook-event-type">
+                        <span class="event-badge ${webhook.event}">${webhook.event.toUpperCase()}</span>
+                    </div>
+                    <div class="webhook-meta">
+                        <div class="webhook-meta-item">
+                            <i>🕒</i>
+                            ${new Date(webhook.timestamp * 1000).toLocaleString()}
+                        </div>
+                        <div class="webhook-meta-item">
+                            <i>📧</i>
+                            ${webhook.recipient}
+                        </div>
+                        <div class="webhook-meta-item subject">
+                            <i>📝</i>
+                            ${webhook.message?.headers?.subject || 'No Subject'}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="webhook-details">
+                    ${webhook.clientInfo?.bot ? `
+                        <div class="webhook-detail">
+                            <i>🤖</i> ${webhook.clientInfo.bot}
+                        </div>
+                    ` : ''}
+                    
+                    ${webhook.delivery ? `
+                        <div class="webhook-detail">
+                            <i>📬</i> ${webhook.delivery.status}${webhook.delivery.description ? ` - ${webhook.delivery.description}` : ''}
+                        </div>
+                    ` : ''}
+                    
+                    ${webhook.reason ? `
+                        <div class="webhook-detail">
+                            <i>ℹ️</i> ${webhook.reason}
+                        </div>
+                    ` : ''}
+                </div>
             </div>
-            ${webhook.clientInfo?.bot ? `<p class="webhook-detail">Bot: ${webhook.clientInfo.bot}</p>` : ''}
-            ${webhook.geolocation ? `
-                <p class="webhook-detail">Location: ${[webhook.geolocation.city, webhook.geolocation.region, webhook.geolocation.country]
-                    .filter(Boolean).join(', ')}</p>
-            ` : ''}
-            ${webhook.delivery ? `
-                <p class="webhook-detail">Status: ${webhook.delivery.status}${webhook.delivery.description ? ` - ${webhook.delivery.description}` : ''}</p>
-            ` : ''}
-            ${webhook.reason ? `<p class="webhook-detail">Reason: ${webhook.reason}</p>` : ''}
-            <details>
-                <summary>Raw Data</summary>
-                <pre>${JSON.stringify(webhook.rawData, null, 2)}</pre>
-            </details>
-        </div>
+        </a>
     `).join('');
 }
 
