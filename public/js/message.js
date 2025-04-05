@@ -38,4 +38,6 @@ function showContent(type) {
 }
 
 // Load message details when page loads
-loadMessageDetails(); 
+document.addEventListener('DOMContentLoaded', () => {
+    loadMessageDetails();
+});
