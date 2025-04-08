@@ -18,6 +18,9 @@ async function loadMessageDetails() {
 
         // Set plain text content
         document.getElementById('plainText').textContent = message['body-plain'] || 'No plain text content available';
+
+        // Set raw data content
+        document.getElementById('rawData').textContent = JSON.stringify(message, null, 2);
     } catch (error) {
         console.error('Error loading message:', error);
     }
