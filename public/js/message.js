@@ -6,11 +6,17 @@ async function loadMessageDetails() {
         const response = await fetch(`/api/messages/${messageId}`);
         const message = await response.json();
 
-        // Fill in message details
+        // Helper function to get header value
+        const getHeader = (headers, name) => {
+            const header = headers.find(h => h[0] === name);
+            return header ? header[1] : 'Not available';
+        };
+
+        // Fill in message details from message-headers array
         document.getElementById('messageId').textContent = message.messageId;
-        document.getElementById('subject').textContent = message.headers?.subject || 'No Subject';
-        document.getElementById('from').textContent = message.headers?.from || 'No Sender';
-        document.getElementById('to').textContent = message.headers?.to || 'No Recipient';
+        document.getElementById('subject').textContent = getHeader(message['message-headers'], 'Subject');
+        document.getElementById('from').textContent = getHeader(message['message-headers'], 'From');
+        document.getElementById('to').textContent = getHeader(message['message-headers'], 'To');
 
         // Set HTML content
         const htmlFrame = document.getElementById('htmlFrame');
