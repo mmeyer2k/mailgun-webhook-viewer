@@ -9,33 +9,45 @@
     <link rel="stylesheet" href="css/style.css">
     <style>
         @media print {
-            .back-link, .content-tabs, .print-button { display: none; }
-            .message-header { margin-bottom: 20px; }
-            #textContent { display: none !important; }
-            body * { visibility: hidden; }
-            #printArea, #printArea * { visibility: visible; }
-            #printArea { 
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
+            /* Hide non-printable elements */
+            .back-link, .content-tabs, .print-button { 
+                display: none; 
             }
+            
+            /* Hide the main content */
+            .container > *:not(#printArea) {
+                display: none;
+            }
+            
+            /* Show print area */
+            #printArea {
+                display: block !important;
+                position: static;
+                margin: 20px;
+            }
+            
+            /* Style the print header */
             .print-header {
                 margin-bottom: 30px;
                 padding-bottom: 20px;
                 border-bottom: 1px solid #ccc;
             }
+            
             .print-meta p {
                 margin: 8px 0;
             }
+            
             #printContent {
                 margin-top: 20px;
             }
+            
             #printContent img {
                 max-width: 100%;
                 height: auto;
             }
         }
+        
+        /* Keep existing button styles */
         .print-button {
             padding: 8px 16px;
             background: #007bff;
