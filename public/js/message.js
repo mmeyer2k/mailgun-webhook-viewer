@@ -37,6 +37,22 @@ function showContent(type) {
     document.getElementById(`${type}Content`).classList.add('active');
 }
 
+function printMessage() {
+    // Copy message details to print area
+    document.getElementById('printSubject').textContent = document.getElementById('subject').textContent;
+    document.getElementById('printFrom').textContent = document.getElementById('from').textContent;
+    document.getElementById('printTo').textContent = document.getElementById('to').textContent;
+    document.getElementById('printDate').textContent = new Date().toLocaleString();
+    
+    // Copy the HTML content
+    const htmlFrame = document.getElementById('htmlFrame');
+    const printContent = document.getElementById('printContent');
+    printContent.innerHTML = htmlFrame.contentDocument.body.innerHTML;
+    
+    // Trigger print
+    window.print();
+}
+
 // Load message details when page loads
 document.addEventListener('DOMContentLoaded', () => {
     loadMessageDetails();

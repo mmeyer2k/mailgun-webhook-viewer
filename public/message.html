@@ -7,12 +7,35 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        @media print {
+            .back-link, .content-tabs, .print-button { display: none; }
+            .message-header { margin-bottom: 20px; }
+            #textContent { display: none !important; }
+            body * { visibility: hidden; }
+            #printArea, #printArea * { visibility: visible; }
+            #printArea { position: absolute; top: 0; left: 0; }
+        }
+        .print-button {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            float: right;
+        }
+        .print-button:hover {
+            background: #0056b3;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <a href="javascript:history.back()" class="back-link">← Back</a>
             <h1>Message Details</h1>
+            <button onclick="printMessage()" class="print-button">🖨️ Print</button>
         </div>
 
         <div class="message-header">
@@ -48,7 +71,21 @@
         <div id="textContent" class="content-panel">
             <pre id="plainText"></pre>
         </div>
+
+        <!-- Add hidden print area -->
+        <div id="printArea" style="display: none;">
+            <div class="print-header">
+                <h2>Email Message</h2>
+                <div class="print-meta">
+                    <p><strong>Subject:</strong> <span id="printSubject"></span></p>
+                    <p><strong>From:</strong> <span id="printFrom"></span></p>
+                    <p><strong>To:</strong> <span id="printTo"></span></p>
+                    <p><strong>Date:</strong> <span id="printDate"></span></p>
+                </div>
+            </div>
+            <div id="printContent"></div>
+        </div>
     </div>
     <script src="js/message.js"></script>
 </body>
-</html> 
+</html>
