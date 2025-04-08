@@ -37,7 +37,12 @@ function showContent(type) {
     document.getElementById(`${type}Content`).classList.add('active');
 }
 
-function printMessage() {
+async function printMessage() {
+    // Wait for message details if they haven't loaded yet
+    if (!document.getElementById('subject').textContent) {
+        await loadMessageDetails();
+    }
+    
     // Copy message details to print area
     document.getElementById('printSubject').textContent = document.getElementById('subject').textContent;
     document.getElementById('printFrom').textContent = document.getElementById('from').textContent;
