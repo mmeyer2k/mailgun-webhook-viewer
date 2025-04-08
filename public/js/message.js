@@ -44,13 +44,19 @@ function printMessage() {
     document.getElementById('printTo').textContent = document.getElementById('to').textContent;
     document.getElementById('printDate').textContent = new Date().toLocaleString();
     
-    // Copy the HTML content
     const htmlFrame = document.getElementById('htmlFrame');
     const printContent = document.getElementById('printContent');
-    printContent.innerHTML = htmlFrame.contentDocument.body.innerHTML;
     
-    // Trigger print
-    window.print();
+    // Ensure iframe content is loaded
+    if (htmlFrame.contentDocument.readyState === 'complete') {
+        printContent.innerHTML = htmlFrame.contentDocument.body.innerHTML;
+        window.print();
+    } else {
+        htmlFrame.onload = () => {
+            printContent.innerHTML = htmlFrame.contentDocument.body.innerHTML;
+            window.print();
+        };
+    }
 }
 
 // Load message details when page loads

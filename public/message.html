@@ -14,7 +14,27 @@
             #textContent { display: none !important; }
             body * { visibility: hidden; }
             #printArea, #printArea * { visibility: visible; }
-            #printArea { position: absolute; top: 0; left: 0; }
+            #printArea { 
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+            }
+            .print-header {
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 1px solid #ccc;
+            }
+            .print-meta p {
+                margin: 8px 0;
+            }
+            #printContent {
+                margin-top: 20px;
+            }
+            #printContent img {
+                max-width: 100%;
+                height: auto;
+            }
         }
         .print-button {
             padding: 8px 16px;
