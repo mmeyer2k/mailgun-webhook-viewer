@@ -16,6 +16,7 @@ async function loadMessageDetails() {
         document.getElementById('messageId').textContent = message.messageId;
         document.getElementById('subject').textContent = getHeader(message['message-headers'], 'Subject');
         document.getElementById('from').textContent = getHeader(message['message-headers'], 'From');
+        document.getElementById('date').textContent = getHeader(message['message-headers'], 'Date');
         document.getElementById('to').textContent = getHeader(message['message-headers'], 'To');
 
         // Set HTML content
