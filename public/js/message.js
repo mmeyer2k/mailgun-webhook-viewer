@@ -57,7 +57,7 @@ async function printMessage() {
     document.getElementById('printSubject').textContent = document.getElementById('subject').textContent;
     document.getElementById('printFrom').textContent = document.getElementById('from').textContent;
     document.getElementById('printTo').textContent = document.getElementById('to').textContent;
-    document.getElementById('printDate').textContent = new Date().toLocaleString();
+    document.getElementById('printDate').textContent = document.getElementById('date').textContent;
     
     const htmlFrame = document.getElementById('htmlFrame');
     const printContent = document.getElementById('printContent');
