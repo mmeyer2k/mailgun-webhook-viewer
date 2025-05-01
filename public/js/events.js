@@ -14,6 +14,15 @@ async function searchWebhooks(page = 1) {
     const event = document.getElementById('event').value;
     const startDate = document.getElementById('startDate').value;
     const endDate = document.getElementById('endDate').value;
+    
+    // Show loading indicator
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    loadingIndicator.style.display = 'block';
+    
+    // Clear previous results while loading
+    document.getElementById('webhooksList').innerHTML = '';
+    document.getElementById('pagination').innerHTML = '';
+    document.getElementById('totalResults').textContent = '';
 
     const params = new URLSearchParams({
         page,
@@ -33,11 +42,13 @@ async function searchWebhooks(page = 1) {
         const data = await response.json();
         displayWebhooks(data.webhooks);
         displayPagination(data.pages);
-        
-        // Add this new line to display total results
         document.getElementById('totalResults').textContent = `Total Results: ${data.total}`;
     } catch (error) {
         console.error('Error fetching webhooks:', error);
+        document.getElementById('webhooksList').innerHTML = '<div class="error-message">Error loading webhooks. Please try again.</div>';
+    } finally {
+        // Hide loading indicator
+        loadingIndicator.style.display = 'none';
     }
 }
 
