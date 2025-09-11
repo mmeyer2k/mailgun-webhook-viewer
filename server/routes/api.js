@@ -34,7 +34,8 @@ router.get('/webhooks', async (req, res) => {
     const webhooks = await Webhook.find(query)
       .sort({ timestamp: -1 })
       .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     const total = await Webhook.countDocuments(query);
 
