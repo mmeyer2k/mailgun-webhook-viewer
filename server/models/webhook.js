@@ -48,11 +48,25 @@ const webhookSchema = new mongoose.Schema({
   reason: String,
 }, { timestamps: true });
 
-// Compound index for timestamp-based sorting with filters
-webhookSchema.index({ timestamp: -1, recipient: 1 });
-webhookSchema.index({ timestamp: -1, 'message.headers.subject': 1 });
+// Compound indexes for common query patterns
+// Index for sorting by timestamp with event filter
+webhookSchema.index({ timestamp: -1, event: 1 });
 
-// Compound index for message ID lookups with timestamp
-webhookSchema.index({ 'message.headers.messageId': 1, timestamp: 1 });
+// Index for recipient search with timestamp sorting
+webhookSchema.index({ recipient: 1, timestamp: -1 });
+
+// Index for subject search with timestamp sorting  
+webhookSchema.index({ 'message.headers.subject': 1, timestamp: -1 });
+
+// Index for message ID lookups (fix field name - should be 'message-id' not 'messageId')
+webhookSchema.index({ 'message.headers.message-id': 1, timestamp: 1 });
+
+// Index for timestamp range queries
+webhookSchema.index({ timestamp: -1 });
+
+// Text index for faster full-text search on recipient and subject
+// Note: MongoDB text indexes can only have one per collection, so we prioritize
+// recipient as it's likely more commonly searched
+webhookSchema.index({ recipient: 'text', 'message.headers.subject': 'text' });
 
 module.exports = mongoose.model('Webhook', webhookSchema); 
