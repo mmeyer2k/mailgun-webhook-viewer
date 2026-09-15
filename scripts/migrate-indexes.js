@@ -31,14 +31,33 @@ const CREATE = [
 ];
 
 // Dead weight. See the "Deliberately NOT indexed" notes in the models.
+//
+// Ops counts below are from $indexStats over 315 days of production uptime.
+// Re-check with:
+//   db.webhooks.aggregate([{$indexStats:{}}])
+// before adding to this list — an index that is merely unused *today* may just
+// be waiting on a query pattern that has not run since the last mongod restart.
 const DROP = [
-  ['webhooks', 'recipient_text_message.headers.subject_text'],
-  ['webhooks', 'timestamp_1'],
-  ['webhooks', 'timestamp_-1_event_1'],
-  ['webhooks', 'event_1'],
-  ['messages', 'headers.MessageId_1'],
-  ['messages', 'headers.Subject_1'],
-  ['messages', 'headers.To_1']
+  // Zero recorded reads.
+  ['webhooks', 'recipient_text_message.headers.subject_text'],  // 2211 MB, 0 ops — no query uses $text
+  ['webhooks', 'message.headers.messageId_1_timestamp_1'],      //  747 MB, 0 ops — indexes `messageId`,
+                                                                //    but the real field is `message-id`
+  // Sort-field-first duplicates of indexes kept above (ESR). The planner picks
+  // them occasionally but the correctly-ordered equivalents are strictly better.
+  ['webhooks', 'timestamp_-1_message.headers.subject_1'],       // 2331 MB, 14 ops
+  ['webhooks', 'timestamp_-1_recipient_1'],                     // 1902 MB,  6 ops
+  ['webhooks', 'timestamp_-1_event_1'],                         // 1158 MB,  6 ops
+
+  // Redundant single-field / prefix indexes. A single-field index is walked in
+  // either direction, so timestamp_-1 serves the ascending sort that timestamp_1
+  // currently answers; event_1 is a prefix of event_1_timestamp_-1.
+  ['webhooks', 'timestamp_1'],                                  //  713 MB, 281 ops -> moves to timestamp_-1
+  ['webhooks', 'event_1'],                                      //  217 MB,  87 ops -> moves to event_1_timestamp_-1
+
+  // Index a `headers` path that this schema does not have.
+  ['messages', 'headers.MessageId_1'],                          //   34 MB, 0 ops
+  ['messages', 'headers.Subject_1'],                            //   34 MB, 0 ops
+  ['messages', 'headers.To_1']                                  //   34 MB, 0 ops
 ];
 
 const mb = (b) => (b / 1024 / 1024).toFixed(1) + ' MB';
