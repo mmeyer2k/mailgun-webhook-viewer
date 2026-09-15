@@ -31,8 +31,8 @@
         
         <div class="search-form">
             <div class="form-group">
-                <input type="text" id="recipient" placeholder="Search by recipient" onkeyup="handleEnterKey(event)">
-                <input type="text" id="subject" placeholder="Search by subject" onkeyup="handleEnterKey(event)">
+                <input type="text" id="recipient" placeholder="Recipient (full address or start of one)" onkeyup="handleEnterKey(event)">
+                <input type="text" id="subject" placeholder="Subject starts with…" onkeyup="handleEnterKey(event)">
                 <select id="event" onchange="searchWebhooks()">
                     <option value="">All Events</option>
                     <option value="accepted">Accepted</option>
@@ -48,6 +48,9 @@
                 <input type="date" id="endDate" onkeyup="handleEnterKey(event)">
                 <button onclick="searchWebhooks()">Search</button>
                 <button onclick="clearSearch()" class="clear-button">Clear</button>
+                <label class="contains-toggle" title="Matches anywhere in the field instead of at the start. Cannot use an index, so it scans the whole collection and may time out.">
+                    <input type="checkbox" id="containsMatch" onchange="searchWebhooks()"> match anywhere (slow)
+                </label>
             </div>
         </div>
 

@@ -14,6 +14,7 @@ async function searchWebhooks(page = 1) {
     const event = document.getElementById('event').value;
     const startDate = document.getElementById('startDate').value;
     const endDate = document.getElementById('endDate').value;
+    const match = document.getElementById('containsMatch').checked ? 'contains' : '';
     
     // Show loading indicator
     const loadingIndicator = document.getElementById('loadingIndicator');
@@ -30,7 +31,8 @@ async function searchWebhooks(page = 1) {
         subject,
         event,
         startDate,
-        endDate
+        endDate,
+        match
     });
 
     // Update URL without reloading the page
@@ -40,9 +42,19 @@ async function searchWebhooks(page = 1) {
     try {
         const response = await fetch(`/api/webhooks?${params}`);
         const data = await response.json();
+
+        if (!response.ok) {
+            document.getElementById('webhooksList').innerHTML =
+                `<div class="error-message">${data.error || 'Error loading webhooks.'}</div>`;
+            return;
+        }
+
         displayWebhooks(data.webhooks);
         displayPagination(data.pages);
-        document.getElementById('totalResults').textContent = `Total Results: ${data.total}`;
+        // The API stops counting at 10,000 — counting every match of a filter
+        // across the full collection is a scan that takes tens of seconds.
+        document.getElementById('totalResults').textContent =
+            `Total Results: ${data.total.toLocaleString()}${data.totalIsExact === false ? '+' : ''}`;
     } catch (error) {
         console.error('Error fetching webhooks:', error);
         document.getElementById('webhooksList').innerHTML = '<div class="error-message">Error loading webhooks. Please try again.</div>';
@@ -177,6 +189,7 @@ function getSearchParams() {
     if (event) params.set('search_event', event);
     if (startDate) params.set('search_startDate', startDate);
     if (endDate) params.set('search_endDate', endDate);
+    if (document.getElementById('containsMatch').checked) params.set('search_match', 'contains');
 
     return params.toString();
 }
@@ -190,6 +203,7 @@ function restoreSearchCriteria() {
     if (params.has('event')) document.getElementById('event').value = params.get('event');
     if (params.has('startDate')) document.getElementById('startDate').value = params.get('startDate');
     if (params.has('endDate')) document.getElementById('endDate').value = params.get('endDate');
+    if (params.get('match') === 'contains') document.getElementById('containsMatch').checked = true;
 
     // Always load webhooks, whether there are search params or not
     searchWebhooks();
@@ -205,6 +219,7 @@ function clearSearch() {
     document.getElementById('event').value = '';
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
+    document.getElementById('containsMatch').checked = false;
 
     // Reset to first page and search
     currentPage = 1;

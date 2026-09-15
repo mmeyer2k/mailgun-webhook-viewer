@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Secrets — .env.sample is the tracked template
+.env
+.env.*
+!.env.sample
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Scratch
+*.bak

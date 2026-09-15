@@ -26,7 +26,11 @@ mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 5000,
-  retryWrites: true
+  retryWrites: true,
+  // Mongoose otherwise issues createIndex for every declared index on every
+  // boot. Against ~100M documents that kicks off multi-GB index builds during
+  // startup. Indexes are managed explicitly by scripts/migrate-indexes.js.
+  autoIndex: process.env.MONGO_AUTO_INDEX === 'true'
 })
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
