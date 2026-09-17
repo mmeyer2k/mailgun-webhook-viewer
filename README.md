@@ -13,6 +13,10 @@ Add it to Claude Code:
 claude mcp add --transport http mailgun http://<tailscale-host>:3000/mcp
 ```
 
+Or click **Connect MCP** on the web UI: it copies a ready-made prompt — with the
+URL already filled in from the host you are browsing — that you paste into
+Claude Code to have it install and verify the server itself.
+
 Tools: `describe_collection`, `find`, `count`, `aggregate`. Usage guidance —
 the schema traps, which queries are index-backed — is delivered to the agent
 automatically in the MCP `instructions` block; there is no separate doc to read.

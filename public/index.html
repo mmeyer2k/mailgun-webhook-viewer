@@ -27,7 +27,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>Mailgun Webhook Manager</h1>
+        <div class="header">
+            <h1>Mailgun Webhook Manager</h1>
+            <button onclick="copyMcpPrompt()" class="mcp-connect-button" title="Copies a prompt you paste into Claude Code; it installs this server as an MCP endpoint for itself.">Connect MCP</button>
+        </div>
         
         <div class="search-form">
             <div class="form-group">
@@ -59,6 +62,8 @@
         <div class="pagination" id="pagination"></div>
         <div class="total-results text-center" id="totalResults"></div>
     </div>
+    <div class="toast" id="mcpToast" role="status" aria-live="polite"></div>
     <script src="js/events.js"></script>
+    <script src="js/mcp-connect.js"></script>
 </body>
 </html> 
