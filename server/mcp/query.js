@@ -19,7 +19,11 @@ const DEFAULTS = {
 const WRITE_STAGES = ['$out', '$merge'];
 // Operators that execute JavaScript on the server.
 const JS_OPERATORS = ['$function', '$where', '$accumulator'];
-const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS];
+// Opens a TAILABLE cursor: hasNext() blocks waiting for the next write rather
+// than returning, so it outlives maxTimeMS and pins one of the four
+// concurrency slots until the client disconnects.
+const TAILABLE_STAGES = ['$changeStream'];
+const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS, ...TAILABLE_STAGES];
 
 // Stages that read from ANOTHER collection. The `collection` tool parameter
 // only scopes the primary collection; these must be held to the same list.
@@ -69,9 +73,9 @@ function assertNoForbiddenOperators(value, what = 'query') {
     for (const key of Object.keys(node)) {
       if (FORBIDDEN.includes(key)) {
         throw new Error(
-          `${key} is not permitted in ${what}: this endpoint is read-only and ` +
-          `does not execute server-side JavaScript. Forbidden anywhere, at any ` +
-          `depth: ${FORBIDDEN.join(', ')}.`
+          `${key} is not permitted in ${what}: this endpoint is read-only, ` +
+          `does not execute server-side JavaScript, and does not open tailable ` +
+          `cursors. Forbidden anywhere, at any depth: ${FORBIDDEN.join(', ')}.`
         );
       }
       if (LOOKUP_STAGES.includes(key)) {

@@ -57,7 +57,20 @@ async function withSlot(fn) {
  * A query only reaches the recipient_ci index if it passes the matching
  * collation; explaining without it plans a DIFFERENT query, reports a scan, and
  * would block exactly the fast exact-recipient lookup this server exists to
- * serve. That is why the command object is built once and used for both.
+ * serve. A guard that explains one query and runs another is not a guard.
+ *
+ * What is guaranteed to match, per tool:
+ *  - count: the very same object is explained and then handed to db.command,
+ *    so nothing can drift. This is why the tool does not use countDocuments():
+ *    the driver implements it as aggregate([{$match}, {$group}]), a different
+ *    command with a different plan from the `count` that was explained.
+ *  - find: the explained command mirrors the cursor field for field — filter,
+ *    limit, sort, skip, projection, collation, hint.
+ *  - aggregate: the explained command carries the same pipeline (with _id
+ *    strings already coerced), collation, hint and allowDiskUse.
+ *
+ * Only maxTimeMS may differ, and only where the driver takes it as a cursor
+ * option rather than a command field: it is a deadline, not a plan input.
  */
 async function planAndGuard(db, command, { hasFilter, hasLimit, allowFullScan }) {
   let plan;
@@ -74,6 +87,7 @@ async function planAndGuard(db, command, { hasFilter, hasLimit, allowFullScan })
         indexUsed: null,
         leadingBound: null,
         blockingStages: [],
+        notes: [],
         warnings: [
           `Could not plan this query before running it (${err.message}). The ` +
           'full-scan guard did NOT run, so this query executed unchecked, ' +
@@ -85,7 +99,10 @@ async function planAndGuard(db, command, { hasFilter, hasLimit, allowFullScan })
     };
   }
 
-  const blocked = plan.warnings.length > 0 && !allowFullScan;
+  // 'unknown' means the guard never evaluated this plan. Blocking on that
+  // would turn every explain shape we fail to parse into a hard stop; the
+  // warning is loud enough. Fail open, but never silently.
+  const blocked = plan.scanType !== 'unknown' && plan.warnings.length > 0 && !allowFullScan;
   return { plan, blocked };
 }
 
@@ -100,6 +117,7 @@ const blockedResult = (plan) =>
       blockingStages: plan.blockingStages,
     },
     warnings: plan.warnings,
+    notes: plan.notes || [],
     hint:
       'This query was NOT run. Tell the user what it will cost and why, then ' +
       're-call with allowFullScan: true only if they agree.',
@@ -218,6 +236,7 @@ function registerTools(server, db) {
           executed: true,
           plan: { scanType: plan.scanType, indexUsed: plan.indexUsed },
           warnings: plan.warnings,
+          notes: plan.notes || [],
           returned,
           truncated,
           documents: kept,
@@ -265,7 +284,11 @@ function registerTools(server, db) {
           });
         }
 
-        const command = { count: args.collection, query: filter };
+        // ONE object, explained and then executed. countDocuments() would be
+        // the obvious call, but the 3.x driver implements it as
+        // aggregate([{$match}, {$group}]) — so the tool would report the plan
+        // of a `count` command and then run an aggregate with a different one.
+        const command = { count: args.collection, query: filter, maxTimeMS };
         if (args.collation) command.collation = args.collation;
         if (args.hint) command.hint = args.hint;
 
@@ -277,16 +300,15 @@ function registerTools(server, db) {
         plan = guard.plan;
         if (guard.blocked) return blockedResult(plan);
 
-        const options = { maxTimeMS };
-        if (args.collation) options.collation = args.collation;
-        if (args.hint) options.hint = args.hint;
-        const count = await db.collection(args.collection).countDocuments(filter, options);
+        const result = await db.command(command);
+        const count = result.n;
 
         return jsonResult({
           executed: true,
           estimated: false,
           plan: { scanType: plan.scanType, indexUsed: plan.indexUsed },
           warnings: plan.warnings,
+          notes: plan.notes || [],
           count,
         });
       } catch (err) {
@@ -319,11 +341,30 @@ function registerTools(server, db) {
       let plan = null;
       try {
         const maxTimeMS = clampTime(args.maxTimeMS);
-        const firstMatch = args.pipeline.find((s) => s && s.$match);
-        const hasFilter = Boolean(firstMatch && Object.keys(firstMatch.$match).length > 0);
-        const hasLimit = args.pipeline.some((s) => s && s.$limit);
 
-        const command = { aggregate: args.collection, pipeline: args.pipeline, cursor: {} };
+        // find and count coerce 24-hex _id strings to ObjectId; a pipeline
+        // whose first stage is {$match: {_id: "..."}} deserves the same, or an
+        // agent that pastes an _id out of a find result silently matches
+        // nothing. Only top-level $match stages: deeper ones may belong to
+        // $lookup sub-pipelines against other shapes.
+        const pipeline = args.pipeline.map((s) =>
+          (s && s.$match && typeof s.$match === 'object') ? { ...s, $match: coerceIds(s.$match) } : s);
+
+        // Only the FIRST stage counts as "the filter". A $match after a $group
+        // filters the group output, not the collection, so it cannot bound the
+        // scan — treating it as a filter mislabels the plan.
+        const first = pipeline[0];
+        const hasFilter = Boolean(first && first.$match && Object.keys(first.$match).length > 0);
+        const hasLimit = pipeline.some((s) => s && s.$limit);
+
+        const command = {
+          aggregate: args.collection,
+          pipeline,
+          cursor: {},
+          // allowDiskUse changes what the planner may choose for a blocking
+          // stage, so the explained command has to carry it too.
+          allowDiskUse: Boolean(args.allowDiskUse),
+        };
         if (args.collation) command.collation = args.collation;
         if (args.hint) command.hint = args.hint;
 
@@ -339,7 +380,7 @@ function registerTools(server, db) {
         if (args.collation) options.collation = args.collation;
         if (args.hint) options.hint = args.hint;
 
-        const cursor = db.collection(args.collection).aggregate(args.pipeline, options);
+        const cursor = db.collection(args.collection).aggregate(pipeline, options);
         const { docs: kept, returned, truncated } = await collectBounded(cursor, {
           maxBytes: DEFAULTS.maxBytes,
           maxDocs: DEFAULTS.maxLimit,
@@ -349,6 +390,7 @@ function registerTools(server, db) {
           executed: true,
           plan: { scanType: plan.scanType, indexUsed: plan.indexUsed },
           warnings: plan.warnings,
+          notes: plan.notes || [],
           returned,
           truncated,
           documents: kept,

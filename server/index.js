@@ -32,26 +32,35 @@ const PORT = process.env.PORT || 3000;
 // only from the private/Tailscale ranges. The Host allowlist must name every
 // host:port a client will use; only the localhost forms are built in.
 const mcpAllowedHosts = mcpRouter.defaultAllowedHosts(PORT);
-if (!process.env.MCP_ALLOWED_HOSTS) {
-  console.warn('MCP_ALLOWED_HOSTS is not set: /mcp will accept only localhost Host headers.');
-}
 app.use('/mcp', mcpRouter(() => mongoose.connection.db, { allowedHosts: mcpAllowedHosts }));
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-    // These options were added by Cursor for docker compatibility ...?
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000,
-  retryWrites: true,
-  // Mongoose otherwise issues createIndex for every declared index on every
-  // boot. Against ~100M documents that kicks off multi-GB index builds during
-  // startup. Indexes are managed explicitly by scripts/migrate-indexes.js.
-  autoIndex: process.env.MONGO_AUTO_INDEX === 'true'
-})
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Every route and middleware above is registered unconditionally, so requiring
+// this module yields the fully wired app — which is what test/ipCheck.test.js
+// asserts the mount ORDER of. Only the side effects below belong to running as
+// a program: connecting, listening, and warning on the console.
+if (require.main === module) {
+  if (!process.env.MCP_ALLOWED_HOSTS) {
+    console.warn('MCP_ALLOWED_HOSTS is not set: /mcp will accept only localhost Host headers.');
+  }
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-}); 
+  // Connect to MongoDB
+  mongoose.connect(process.env.MONGODB_URI, {
+      // These options were added by Cursor for docker compatibility ...?
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    retryWrites: true,
+    // Mongoose otherwise issues createIndex for every declared index on every
+    // boot. Against ~100M documents that kicks off multi-GB index builds during
+    // startup. Indexes are managed explicitly by scripts/migrate-indexes.js.
+    autoIndex: process.env.MONGO_AUTO_INDEX === 'true'
+  })
+    .then(() => console.log('Connected to MongoDB'))
+    .catch(err => console.error('MongoDB connection error:', err));
+
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app; 

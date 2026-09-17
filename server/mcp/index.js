@@ -65,12 +65,13 @@ function mcpRouter(getDb, { allowedHosts }) {
       { instructions: INSTRUCTIONS }
     );
 
-    try {
-      registerTools(server, getDb());
-    } catch (err) {
-      console.error('MCP tool registration failed:', err);
-      return rpcError(res, 503, 'Database unavailable');
-    }
+    // getDb() returns undefined until mongoose finishes connecting, and
+    // registerTools does not throw on it — it happily registers tools that
+    // close over nothing and fail one call later, deep inside the transport.
+    // Check the value instead of catching a throw that never comes.
+    const db = getDb();
+    if (!db) return rpcError(res, 503, 'Database not connected yet. Retry shortly.');
+    registerTools(server, db);
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
