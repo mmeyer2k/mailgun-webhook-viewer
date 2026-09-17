@@ -49,7 +49,15 @@ function collectStages(node, out = []) {
   if (typeof node.stage === 'string') {
     out.push(node);
   }
-  Object.values(node).forEach((child) => collectStages(child, out));
+  for (const [key, child] of Object.entries(node)) {
+    // rejectedPlans holds complete stage trees for candidates the planner
+    // DISCARDED, and allPlansExecution does the same under executionStats
+    // verbosity. Walking them lets a rejected COLLSCAN misclassify the fast
+    // winning IXSCAN beside it — which would block the exact-recipient lookup
+    // this gate exists to let through.
+    if (key === 'rejectedPlans' || key === 'allPlansExecution') continue;
+    collectStages(child, out);
+  }
   return out;
 }
 

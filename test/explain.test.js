@@ -121,3 +121,30 @@ test('handles an explain document with no recognisable plan', () => {
   assert.strictEqual(r.scanType, 'indexSeek');
   assert.deepStrictEqual(r.warnings, []);
 });
+
+test('ignores rejectedPlans when classifying', () => {
+  // Real explain output carries full stage trees for DISCARDED candidates.
+  // A rejected COLLSCAN must not condemn the winning IXSCAN beside it.
+  const r = analyzePlan({
+    queryPlanner: {
+      winningPlan: {
+        stage: 'FETCH',
+        inputStage: {
+          stage: 'IXSCAN',
+          indexName: 'recipient_ci',
+          indexBounds: {
+            recipient: ['["a@b.com", "a@b.com"]'],
+            timestamp: ['[MaxKey, MinKey]'],
+          },
+        },
+      },
+      rejectedPlans: [
+        { stage: 'COLLSCAN', filter: { recipient: { $eq: 'a@b.com' } } },
+      ],
+    },
+  }, { hasFilter: true, hasLimit: true });
+
+  assert.strictEqual(r.scanType, 'indexSeek');
+  assert.strictEqual(r.indexUsed, 'recipient_ci');
+  assert.deepStrictEqual(r.warnings, []);
+});
