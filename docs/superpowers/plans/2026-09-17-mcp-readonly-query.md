@@ -1397,6 +1397,482 @@ count with an empty filter returns the metadata estimate rather than scanning."
 
 ---
 
+### Task 5b: Harden the query surface
+
+Added after a mid-build security pass. Four concrete gaps, all in code that
+already exists:
+
+1. `assertReadOnlyPipeline` is applied only to `aggregate`'s pipeline. `find`
+   and `count` pass `filter`, `projection` and `sort` to MongoDB unchecked, and
+   a `find` filter accepts `$where` and `$expr: {$function}` — server-side
+   JavaScript. The guard that the spec, the tool descriptions and `CLAUDE.md`
+   all promise is wired to one tool of three.
+2. `$lookup`, `$graphLookup` and `$unionWith` take `from`/`coll` naming ANY
+   collection in the database. The `collection` enum is not the scope boundary
+   it reads as.
+3. `toArray()` loads the whole result into Node memory BEFORE `truncateDocs`
+   trims it. An `aggregate` with no `$limit` on 100M documents (allowed with
+   `allowFullScan: true`) tries to materialise the full result and can OOM the
+   process — which also hosts webhook ingestion.
+4. `skip` is unbounded, and there is no ceiling on concurrent queries. Both
+   let one caller pin the shared process.
+
+**Files:**
+- Modify: `server/mcp/query.js`
+- Modify: `server/mcp/tools.js`
+- Modify: `test/query.test.js`
+
+**Interfaces:**
+- Consumes: everything Tasks 2–5 produced.
+- Produces:
+  - `assertNoForbiddenOperators(value, what)` → throws on any forbidden operator key anywhere in `value`, or on a lookup-stage target outside `COLLECTIONS`; `what` is a label for the error message (`'filter'`, `'projection'`, `'sort'`, `'pipeline'`).
+  - `assertReadOnlyPipeline(pipeline)` → unchanged signature; now delegates to the above after the array check.
+  - `collectBounded(cursor, { maxBytes, maxDocs })` → `Promise<{ docs, returned, truncated }>`; iterates the cursor, stops at either bound, always closes the cursor. **Replaces `truncateDocs`, which is removed.**
+  - `DEFAULTS` gains `maxSkip: 10000` and `maxConcurrent: 4`.
+
+- [ ] **Step 1: Replace the truncation tests and add the new guard tests**
+
+In `test/query.test.js`, DELETE the three `truncateDocs` tests (`returns everything when under the byte cap`, `stops at the byte cap and reports truncation`, `reports truncation even when the first document exceeds the cap`) and change the import line to:
+
+```js
+const {
+  assertReadOnlyPipeline,
+  assertNoForbiddenOperators,
+  coerceIds,
+  collectBounded,
+  COLLECTIONS,
+} = require('../server/mcp/query');
+```
+
+Then APPEND:
+
+```js
+// ---------------------------------------------------------------------------
+// Operator guard on non-pipeline objects. find/count filters accept $where and
+// $expr:{$function} — server-side JavaScript — so the same walk must cover them.
+// ---------------------------------------------------------------------------
+
+test('rejects $where in a find filter', () => {
+  assert.throws(() => assertNoForbiddenOperators({ recipient: 'a@b.com', $where: 'sleep(1)' }, 'filter'),
+    /\$where.*filter/);
+});
+
+test('rejects $function nested under $expr in a filter', () => {
+  assert.throws(() => assertNoForbiddenOperators(
+    { $expr: { $function: { body: 'function(){return true}', args: [], lang: 'js' } } }, 'filter'),
+    /\$function/);
+});
+
+test('rejects $function in a projection', () => {
+  assert.throws(() => assertNoForbiddenOperators(
+    { x: { $function: { body: 'function(){}', args: [], lang: 'js' } } }, 'projection'),
+    /\$function.*projection/);
+});
+
+test('allows an ordinary filter with $regex, $in and ranges', () => {
+  assert.doesNotThrow(() => assertNoForbiddenOperators({
+    recipient: { $regex: '^user5' },
+    event: { $in: ['delivered', 'opened'] },
+    timestamp: { $gte: 1, $lte: 2 },
+  }, 'filter'));
+});
+
+// ---------------------------------------------------------------------------
+// Lookup-stage targets. The collection enum only scopes the PRIMARY collection;
+// these stages name another one and must be held to the same list.
+// ---------------------------------------------------------------------------
+
+test('rejects $unionWith targeting a collection outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $limit: 1 },
+    { $unionWith: { coll: 'system.users', pipeline: [] } },
+  ]), /\$unionWith.*system\.users/);
+});
+
+test('rejects $lookup from a collection outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $lookup: { from: 'secrets', localField: 'a', foreignField: 'b', as: 'x' } },
+  ]), /\$lookup.*secrets/);
+});
+
+test('rejects the cross-database {db, coll} lookup form', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $lookup: { from: { db: 'admin', coll: 'system.users' }, pipeline: [], as: 'x' } },
+  ]), /\$lookup/);
+});
+
+test('rejects $graphLookup outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $graphLookup: { from: 'other', startWith: '$a', connectFromField: 'a', connectToField: 'b', as: 'x' } },
+  ]), /\$graphLookup.*other/);
+});
+
+test('allows $lookup between the two permitted collections', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([
+    { $match: { event: 'delivered' } },
+    { $lookup: { from: 'messages', localField: 'message.headers.message-id', foreignField: 'messageId', as: 'body' } },
+  ]));
+  assert.deepStrictEqual(COLLECTIONS, ['webhooks', 'messages']);
+});
+
+test('allows $lookup with no from (the $documents form)', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([
+    { $lookup: { pipeline: [{ $documents: [{ a: 1 }] }], as: 'x' } },
+  ]));
+});
+
+// ---------------------------------------------------------------------------
+// Bounded cursor collection. Replaces load-everything-then-trim, which could
+// materialise an unbounded aggregate result in the process that also hosts
+// webhook ingestion.
+// ---------------------------------------------------------------------------
+
+function fakeCursor(docs) {
+  let i = 0;
+  return {
+    closed: false,
+    hasNext: async () => i < docs.length,
+    next: async () => docs[i++],
+    close: async function () { this.closed = true; },
+  };
+}
+
+test('collectBounded returns everything when under both caps and closes the cursor', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 1000 });
+  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.truncated, false);
+  assert.deepStrictEqual(r.docs, [{ a: 1 }, { a: 2 }]);
+  assert.strictEqual(c.closed, true);
+});
+
+test('collectBounded stops at the byte cap without reading further', async () => {
+  const docs = Array.from({ length: 500 }, (_, i) => ({ i, pad: 'x'.repeat(200) }));
+  const c = fakeCursor(docs);
+  const r = await collectBounded(c, { maxBytes: 5000, maxDocs: 1000 });
+  assert.strictEqual(r.truncated, true);
+  assert.ok(r.returned > 0 && r.returned < 500);
+  assert.strictEqual(r.docs.length, r.returned);
+  assert.strictEqual(c.closed, true);
+});
+
+test('collectBounded stops at the document cap and reports truncation when more remain', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }, { a: 3 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
+  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.truncated, true);
+});
+
+test('collectBounded does not report truncation when the cap equals the result size', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
+  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.truncated, false);
+});
+
+test('collectBounded reports truncation when the first document exceeds the cap', async () => {
+  const c = fakeCursor([{ pad: 'x'.repeat(10000) }]);
+  const r = await collectBounded(c, { maxBytes: 100, maxDocs: 1000 });
+  assert.strictEqual(r.returned, 0);
+  assert.strictEqual(r.truncated, true);
+  assert.strictEqual(c.closed, true);
+});
+
+test('collectBounded closes the cursor even if iteration throws', async () => {
+  const c = fakeCursor([]);
+  c.hasNext = async () => { throw new Error('boom'); };
+  await assert.rejects(() => collectBounded(c, { maxBytes: 100, maxDocs: 1 }), /boom/);
+  assert.strictEqual(c.closed, true);
+});
+```
+
+- [ ] **Step 2: Run the tests and verify the new ones fail**
+
+Run: `npm test`
+Expected: FAIL — `assertNoForbiddenOperators` and `collectBounded` are not exported; the lookup-target tests fail because the current guard passes them.
+
+- [ ] **Step 3: Rewrite `server/mcp/query.js`**
+
+Replace the entire file:
+
+```js
+const mongoose = require('mongoose');
+
+const COLLECTIONS = ['webhooks', 'messages'];
+
+const DEFAULTS = {
+  limit: 50,
+  maxLimit: 1000,
+  maxTimeMS: 15000,
+  maxTimeCeiling: 120000,
+  maxBytes: 100000,
+  // skip() walks every key it skips. api.js caps reachable depth the same way.
+  maxSkip: 10000,
+  // This process also hosts webhook ingestion. A handful of 120s analytical
+  // queries is fine; an unbounded number is how one caller takes it down.
+  maxConcurrent: 4,
+};
+
+// Stages that write to a collection.
+const WRITE_STAGES = ['$out', '$merge'];
+// Operators that execute JavaScript on the server.
+const JS_OPERATORS = ['$function', '$where', '$accumulator'];
+const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS];
+
+// Stages that read from ANOTHER collection. The `collection` tool parameter
+// only scopes the primary collection; these must be held to the same list.
+const LOOKUP_STAGES = ['$lookup', '$graphLookup', '$unionWith'];
+
+function assertLookupTarget(stage, spec) {
+  if (!spec || typeof spec !== 'object') return;
+  // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is the
+  // $documents form, which reads no collection and is fine.
+  const target = spec.from !== undefined ? spec.from : spec.coll;
+  if (target === undefined) return;
+  if (typeof target !== 'string' || !COLLECTIONS.includes(target)) {
+    throw new Error(
+      `${stage} may only target ${COLLECTIONS.join(' or ')}; got ` +
+      `${JSON.stringify(target)}. The cross-database {db, coll} form is not permitted.`
+    );
+  }
+}
+
+/**
+ * Reject write stages, server-side JavaScript, and out-of-scope lookup
+ * targets anywhere in a user-supplied query object.
+ *
+ * This is the read-only boundary. There is no read-only database user behind
+ * this endpoint, so the walk has to be complete: it recurses into every nested
+ * object and array, because $out and $function can hide inside $facet,
+ * $lookup.pipeline, $unionWith.pipeline, and $expr. It applies to EVERY object
+ * the caller controls — filter, projection, sort and pipeline alike — because
+ * a find filter accepts $where and $expr:{$function} just as a pipeline does.
+ */
+function assertNoForbiddenOperators(value, what = 'query') {
+  (function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    for (const key of Object.keys(node)) {
+      if (FORBIDDEN.includes(key)) {
+        throw new Error(
+          `${key} is not permitted in ${what}: this endpoint is read-only and ` +
+          `does not execute server-side JavaScript. Forbidden anywhere, at any ` +
+          `depth: ${FORBIDDEN.join(', ')}.`
+        );
+      }
+      if (LOOKUP_STAGES.includes(key)) {
+        assertLookupTarget(key, node[key]);
+      }
+      walk(node[key]);
+    }
+  })(value);
+}
+
+function assertReadOnlyPipeline(pipeline) {
+  if (!Array.isArray(pipeline)) {
+    throw new Error('pipeline must be an array of aggregation stages');
+  }
+  assertNoForbiddenOperators(pipeline, 'pipeline');
+}
+
+const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
+const toObjectId = (v) =>
+  typeof v === 'string' && OBJECT_ID_RE.test(v) ? new mongoose.Types.ObjectId(v) : v;
+
+/**
+ * Convert 24-hex `_id` strings to ObjectId.
+ *
+ * Queries go through the raw driver rather than the Mongoose models — Mongoose
+ * silently drops filter paths absent from the schema, and the schema
+ * deliberately omits Mailgun's dashed keys — so the one piece of Mongoose
+ * casting worth keeping has to be reapplied by hand.
+ */
+function coerceIds(filter) {
+  if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return filter;
+
+  const out = { ...filter };
+  if ('_id' in out) {
+    const v = out._id;
+    if (typeof v === 'string') {
+      out._id = toObjectId(v);
+    } else if (v && typeof v === 'object' && Array.isArray(v.$in)) {
+      out._id = { ...v, $in: v.$in.map(toObjectId) };
+    }
+  }
+  return out;
+}
+
+/**
+ * Drain a cursor up to a byte budget and a document count, then close it.
+ *
+ * The previous shape — toArray() then trim — materialised the ENTIRE result
+ * before trimming. An aggregate with no $limit over 100M documents would try
+ * to hold all of it in the Node process that also runs webhook ingestion.
+ * Reading one document at a time and stopping at the first bound hit keeps
+ * peak memory proportional to the budget, not the result.
+ */
+async function collectBounded(cursor, { maxBytes = DEFAULTS.maxBytes, maxDocs = DEFAULTS.maxLimit } = {}) {
+  const docs = [];
+  let bytes = 0;
+  let truncated = false;
+
+  try {
+    while (docs.length < maxDocs && (await cursor.hasNext())) {
+      const doc = await cursor.next();
+      const size = Buffer.byteLength(JSON.stringify(doc), 'utf8');
+      if (bytes + size > maxBytes) {
+        truncated = true;
+        break;
+      }
+      docs.push(doc);
+      bytes += size;
+    }
+    if (!truncated && docs.length >= maxDocs && (await cursor.hasNext())) {
+      truncated = true;
+    }
+  } finally {
+    await Promise.resolve(cursor.close()).catch(() => {});
+  }
+
+  return { docs, returned: docs.length, truncated };
+}
+
+module.exports = {
+  COLLECTIONS,
+  DEFAULTS,
+  assertNoForbiddenOperators,
+  assertReadOnlyPipeline,
+  coerceIds,
+  collectBounded,
+};
+```
+
+- [ ] **Step 4: Run the tests and verify they pass**
+
+Run: `npm test`
+Expected: all query tests pass (the original 14 non-truncation tests plus 16 new ones = 30), plus 7 ipCheck + 16 explain.
+
+- [ ] **Step 5: Wire the guard, the bounded collector, the skip cap and the concurrency cap into `server/mcp/tools.js`**
+
+Make these edits:
+
+(a) Change the `./query` import to:
+
+```js
+const {
+  COLLECTIONS,
+  DEFAULTS,
+  assertNoForbiddenOperators,
+  assertReadOnlyPipeline,
+  coerceIds,
+  collectBounded,
+} = require('./query');
+```
+
+(b) Add, after `clampTime`:
+
+```js
+// One slot per in-flight query across all three tools. This process also
+// serves webhook ingestion; a pile-up of 120-second aggregates must fail
+// fast rather than starve it.
+let inFlight = 0;
+async function withSlot(fn) {
+  if (inFlight >= DEFAULTS.maxConcurrent) {
+    return errorResult(
+      `Too many concurrent queries (limit ${DEFAULTS.maxConcurrent}). Wait for ` +
+      'an in-flight query to finish and retry.'
+    );
+  }
+  inFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    inFlight -= 1;
+  }
+}
+```
+
+(c) In the `find` tool: change `skip: z.number().int().nonnegative().optional()` to `skip: z.number().int().nonnegative().max(DEFAULTS.maxSkip).optional()`. Wrap the handler body in `withSlot`, and validate every caller-controlled object BEFORE `coerceIds`, in its own try so a rejection is reported as the guard's message (mirroring how `aggregate` already handles `assertReadOnlyPipeline`):
+
+```js
+    async (args) => withSlot(async () => {
+      try {
+        assertNoForbiddenOperators(args.filter || {}, 'filter');
+        if (args.projection) assertNoForbiddenOperators(args.projection, 'projection');
+        if (args.sort) assertNoForbiddenOperators(args.sort, 'sort');
+      } catch (err) {
+        return errorResult(err.message);
+      }
+
+      let plan = null;
+      try {
+        // ... existing body unchanged up to the cursor construction ...
+```
+
+and replace the `toArray()` + `truncateDocs` lines with:
+
+```js
+        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+          maxBytes: DEFAULTS.maxBytes,
+          maxDocs: limit,
+        });
+```
+
+Close the `withSlot(async () => { ... })` wrapper after the existing `catch`.
+
+(d) In the `count` tool: wrap in `withSlot` the same way and add, before `coerceIds`:
+
+```js
+      try {
+        assertNoForbiddenOperators(args.filter || {}, 'filter');
+      } catch (err) {
+        return errorResult(err.message);
+      }
+```
+
+(e) In the `aggregate` tool: wrap in `withSlot`, leave the existing `assertReadOnlyPipeline` try as-is (it now also checks lookup targets via the shared walk), and replace the `.toArray()` + `truncateDocs` lines with:
+
+```js
+        const cursor = db.collection(args.collection).aggregate(args.pipeline, options);
+        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+          maxBytes: DEFAULTS.maxBytes,
+          maxDocs: DEFAULTS.maxLimit,
+        });
+```
+
+- [ ] **Step 6: Verify the module loads and the suite is green**
+
+Run: `node -e "console.log(typeof require('./server/mcp/tools').registerTools)"`
+Expected: `function`
+
+Run: `npm test`
+Expected: PASS, 53 tests (7 + 16 + 30).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/mcp/query.js server/mcp/tools.js test/query.test.js
+git commit -m "Apply the read-only guard to every caller-controlled object
+
+The operator walk was wired to aggregate's pipeline only. A find filter
+accepts \$where and \$expr:{\$function} — server-side JavaScript — so find and
+count were unguarded. The same walk now covers filter, projection and sort.
+
+Lookup stages (\$lookup, \$graphLookup, \$unionWith) name another collection;
+their targets are now held to the same two-collection allowlist the tool
+parameter implies.
+
+Results are drained one document at a time up to the byte and count budgets
+instead of toArray() then trim, so an unbounded aggregate cannot materialise
+100M documents in the process that also hosts webhook ingestion. skip is
+capped and concurrent queries are limited to four."
+```
+
+---
+
 ### Task 6: Mount the endpoint
 
 **Files:**
@@ -1642,6 +2118,23 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { INSTRUCTIONS } = require('./instructions');
 const { registerTools } = require('./tools');
 
+const rpcError = (res, status, message) =>
+  res.status(status).json({ jsonrpc: '2.0', error: { code: -32000, message }, id: null });
+
+/**
+ * Host values the transport will accept. The check is an exact string match
+ * against the Host header, port included, so every name a client might type
+ * into its MCP config has to be listed. Localhost forms are always present so
+ * development works; everything else comes from MCP_ALLOWED_HOSTS.
+ */
+function defaultAllowedHosts(port, env = process.env) {
+  const fromEnv = (env.MCP_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  return [...new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, ...fromEnv])];
+}
+
 /**
  * Express router exposing the read-only MCP endpoint.
  *
@@ -1651,14 +2144,34 @@ const { registerTools } = require('./tools');
  * mid-conversation.
  *
  * Access control is the IP gate in server/index.js, which this router is
- * mounted below. It is NOT re-applied here — one correctly placed gate beats
- * two.
+ * mounted below. That gate checks the TCP peer — and in a browser-borne attack
+ * the peer is a legitimate user on the allowed network, lending their position
+ * to a page they happened to load. Two checks here close that:
+ *
+ *  - Any request carrying an Origin header is refused. Browsers send Origin on
+ *    every POST, including same-origin ones after a DNS rebind; real MCP
+ *    clients never send it.
+ *  - The Host header must match an allowlisted value, enforced by the SDK's
+ *    DNS-rebinding protection. After a rebind the browser's Host is the
+ *    attacker's domain, not ours.
  *
  * @param {() => import('mongodb').Db} getDb resolves the raw driver Db lazily,
  *   so the router can be mounted before MongoDB finishes connecting.
+ * @param {{ allowedHosts: string[] }} options
  */
-module.exports = function mcpRouter(getDb) {
+function mcpRouter(getDb, { allowedHosts }) {
+  if (!Array.isArray(allowedHosts) || allowedHosts.length === 0) {
+    throw new Error('mcpRouter requires a non-empty allowedHosts list');
+  }
+
   const router = express.Router();
+
+  router.use((req, res, next) => {
+    if (req.headers.origin !== undefined) {
+      return rpcError(res, 403, 'Requests with an Origin header are not accepted on this endpoint.');
+    }
+    next();
+  });
 
   router.post('/', async (req, res) => {
     const server = new McpServer(
@@ -1670,14 +2183,14 @@ module.exports = function mcpRouter(getDb) {
       registerTools(server, getDb());
     } catch (err) {
       console.error('MCP tool registration failed:', err);
-      return res.status(503).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Database unavailable' },
-        id: null,
-      });
+      return rpcError(res, 503, 'Database unavailable');
     }
 
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableDnsRebindingProtection: true,
+      allowedHosts,
+    });
     res.on('close', () => {
       transport.close();
       server.close();
@@ -1699,22 +2212,105 @@ module.exports = function mcpRouter(getDb) {
   });
 
   // Stateless mode has no stream to resume and no session to delete.
-  router.all('/', (req, res) => {
-    res.status(405).json({
-      jsonrpc: '2.0',
-      error: { code: -32000, message: 'Method not allowed. Use POST.' },
-      id: null,
-    });
-  });
+  router.all('/', (req, res) => rpcError(res, 405, 'Method not allowed. Use POST.'));
 
   return router;
-};
+}
+
+module.exports = mcpRouter;
+module.exports.defaultAllowedHosts = defaultAllowedHosts;
+```
+
+- [ ] **Step 5a: Update the test harness for the new signature, and add the header tests**
+
+In `test/mcp.test.js`, replace the `withApp` helper so the router is mounted AFTER the port is known (the Host allowlist needs it):
+
+```js
+function withApp(db, fn) {
+  return new Promise((resolve) => {
+    const app = express();
+    app.use(express.json());
+    const server = app.listen(0, '127.0.0.1', async () => {
+      const port = server.address().port;
+      // Mounted after listen so the allowlist can name the real port. Express
+      // accepts routes added at any time.
+      app.use('/mcp', mcpRouter(() => db, { allowedHosts: [`127.0.0.1:${port}`] }));
+      const url = `http://127.0.0.1:${port}/mcp`;
+      const out = await fn(url);
+      server.close(() => resolve(out));
+    });
+  });
+}
+```
+
+Add a raw-HTTP helper (fetch strips forbidden headers such as Host and Origin, so these tests need `node:http`):
+
+```js
+const http = require('node:http');
+
+function rawPost(url, body, extraHeaders) {
+  const u = new URL(url);
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Content-Length': Buffer.byteLength(payload),
+        ...extraHeaders,
+      },
+    }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+```
+
+Append these tests:
+
+```js
+test('a request carrying an Origin header is refused before any database call', async () => {
+  const db = stubDb({ explainResult: IXSCAN_EXPLAIN });
+  const out = await withApp(db, (url) => rawPost(url, {
+    jsonrpc: '2.0', id: 9, method: 'tools/call',
+    params: { name: 'find', arguments: { collection: 'webhooks', filter: { recipient: 'a@b.com' } } },
+  }, { Origin: 'http://evil.example' }));
+  assert.strictEqual(out.status, 403);
+  assert.match(out.text, /Origin/);
+  assert.strictEqual(db.commandCalls.length, 0);
+});
+
+test('a request whose Host is not allowlisted is refused (DNS rebinding)', async () => {
+  const db = stubDb({ explainResult: IXSCAN_EXPLAIN });
+  const out = await withApp(db, (url) => rawPost(url, init, { Host: 'evil.example' }));
+  assert.strictEqual(out.status, 403);
+  assert.match(out.text, /Host/);
+  assert.strictEqual(db.commandCalls.length, 0);
+});
+
+test('defaultAllowedHosts always includes the localhost forms and merges the env list', () => {
+  const hosts = mcpRouter.defaultAllowedHosts(3000, { MCP_ALLOWED_HOSTS: 'mg.tailnet.ts.net:3000, 100.64.1.2:3000' });
+  assert.deepStrictEqual(hosts, [
+    '127.0.0.1:3000', 'localhost:3000', '[::1]:3000',
+    'mg.tailnet.ts.net:3000', '100.64.1.2:3000',
+  ]);
+  assert.deepStrictEqual(mcpRouter.defaultAllowedHosts(3000, {}), ['127.0.0.1:3000', 'localhost:3000', '[::1]:3000']);
+});
+
+test('the router refuses to construct without an allowlist', () => {
+  assert.throws(() => mcpRouter(() => ({}), { allowedHosts: [] }), /allowedHosts/);
+});
 ```
 
 - [ ] **Step 6: Run the test and verify it passes**
 
 Run: `npm test`
-Expected: PASS. All 8 MCP tests green, alongside the earlier suites.
+Expected: PASS. All 12 MCP tests green, alongside the earlier suites.
 
 - [ ] **Step 7: Mount the router in `server/index.js`**
 
@@ -1728,8 +2324,33 @@ Then, immediately after the `app.use('/api', apiRoutes);` line (so it sits below
 
 ```js
 // Read-only MCP endpoint for AI agents. Below the IP gate, so it is reachable
-// only from the private/Tailscale ranges.
-app.use('/mcp', mcpRouter(() => mongoose.connection.db));
+// only from the private/Tailscale ranges. The Host allowlist must name every
+// host:port a client will use; only the localhost forms are built in.
+const mcpAllowedHosts = mcpRouter.defaultAllowedHosts(PORT);
+if (!process.env.MCP_ALLOWED_HOSTS) {
+  console.warn('MCP_ALLOWED_HOSTS is not set: /mcp will accept only localhost Host headers.');
+}
+app.use('/mcp', mcpRouter(() => mongoose.connection.db, { allowedHosts: mcpAllowedHosts }));
+```
+
+`PORT` is currently declared below the routes; move `const PORT = process.env.PORT || 3000;` above this block.
+
+- [ ] **Step 7a: Remove global CORS**
+
+`server/index.js` applies `app.use(cors())` — wildcard `Access-Control-Allow-Origin: *`, all methods, preflight answered before the IP gate runs. The frontend is served same-origin by this very app and Mailgun's delivery is server-to-server, so nothing needs CORS; what the header actually did was let any web page read gated responses through the browser of a user on the allowed network. Delete the `const cors = require('cors');` line and the `app.use(cors());` line, then:
+
+```bash
+npm uninstall cors
+```
+
+- [ ] **Step 7b: Document the new variable**
+
+Append to `.env.sample`:
+
+```
+# Host header values /mcp will accept, comma-separated, port included. The
+# localhost forms are always allowed; list every tailnet name/IP clients use.
+MCP_ALLOWED_HOSTS=
 ```
 
 - [ ] **Step 8: Verify the full app boots with the endpoint mounted**
@@ -1749,12 +2370,19 @@ Expected: an SSE `data:` line whose JSON contains `"serverInfo":{"name":"mailgun
 - [ ] **Step 9: Commit**
 
 ```bash
-git add package.json package-lock.json Dockerfile server/mcp/index.js server/index.js test/mcp.test.js
+git add package.json package-lock.json Dockerfile .env.sample server/mcp/index.js server/index.js test/mcp.test.js
 git commit -m "Mount the read-only MCP endpoint at POST /mcp
 
 Stateless streamable HTTP: a fresh server and transport per request, no session
 state to manage. Mounted below the IP gate, so it inherits the private/Tailscale
-restriction rather than carrying its own check.
+restriction.
+
+The gate checks the TCP peer, and in a browser-borne attack the peer is a
+legitimate user lending their network position to a page they loaded. So the
+router refuses any request carrying an Origin header (browsers always send one
+on POST; MCP clients never do) and enforces a Host allowlist via the SDK's
+DNS-rebinding protection. Global wildcard CORS is removed for the same reason:
+nothing here is cross-origin, and the header let any page read gated responses.
 
 Also bumps the Docker base image off end-of-life Node 18."
 ```
@@ -1842,6 +2470,37 @@ docker compose exec -T mongodb mongosh mailgun-webhooks --quiet --eval 'printjso
 ```
 Expected: no `stolen` collection.
 
+- [ ] **Step 7a: Confirm server-side JavaScript is refused on find**
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"find","arguments":{"collection":"webhooks","filter":{"recipient":"user42@gmail.com","$expr":{"$function":{"body":"function(){return true}","args":[],"lang":"js"}}}}}}'
+```
+Expected: an error naming `$function` and `filter`. This is the acceptance test for Task 5b — before it, this request executed JavaScript inside mongod.
+
+- [ ] **Step 7b: Confirm an out-of-scope lookup target is refused**
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"aggregate","arguments":{"collection":"webhooks","pipeline":[{"$limit":1},{"$unionWith":{"coll":"system.users","pipeline":[]}}]}}}'
+```
+Expected: an error naming `$unionWith` and `system.users`.
+
+- [ ] **Step 7c: Confirm the browser-borne paths are closed**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3000/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'Origin: http://evil.example' -d '{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3000/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'Host: evil.example' -d '{"jsonrpc":"2.0","id":8,"method":"tools/list","params":{}}'
+curl -s -I http://127.0.0.1:3000/ | grep -i 'access-control' || echo "no CORS headers (expected)"
+```
+Expected: `403`, `403`, and no `Access-Control-*` headers on any response.
+
 - [ ] **Step 8: Tear down**
 
 ```bash
@@ -1875,6 +2534,13 @@ executed; re-call with `allowFullScan: true` to override.
 
 If a client reports `406 Not Acceptable`, it is not sending
 `Accept: application/json, text/event-stream`, which the protocol requires.
+
+**`MCP_ALLOWED_HOSTS` is required for anything but localhost.** The endpoint
+enforces a Host allowlist (exact match, port included) as DNS-rebinding
+protection, and refuses any request carrying an `Origin` header. List every
+host:port your clients will type, e.g.
+`MCP_ALLOWED_HOSTS=mailgun.your-tailnet.ts.net:3000,100.64.12.34:3000`. A `403`
+mentioning `Host` means the value the client used is not on the list.
 ```
 
 - [ ] **Step 10: Document it in `CLAUDE.md`**
@@ -1896,8 +2562,17 @@ through. A flagged query returns its warning instead of results and runs only on
 an explicit `allowFullScan: true`.
 
 Read-only is enforced in code, not by a database user: `$out`, `$merge`,
-`$function`, `$where` and `$accumulator` are rejected anywhere in a pipeline,
-including nested inside `$facet`, `$lookup` and `$unionWith`.
+`$function`, `$where` and `$accumulator` are rejected anywhere in ANY
+caller-controlled object — filter, projection, sort and pipeline — including
+nested inside `$facet`, `$lookup`, `$unionWith` and `$expr`. Lookup stages may
+only target `webhooks` or `messages`. Results are drained one document at a
+time to a byte and count budget, never `toArray()`'d, because this process also
+hosts webhook ingestion.
+
+The router refuses any request with an `Origin` header and enforces a Host
+allowlist (`MCP_ALLOWED_HOSTS`). Both exist because the IP gate checks the TCP
+peer, and a browser on the allowed network lends that position to any page it
+loads. Global CORS was removed for the same reason.
 ```
 
 Also update the `## Commands` block to include:

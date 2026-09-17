@@ -390,6 +390,35 @@ rather than loud:
 Integration against a live MongoDB is out of scope for the automated suite; it
 requires `docker compose up` and is verified manually.
 
+## Hardening added after the mid-build security pass
+
+A security review run once Tasks 1–5 were in place found four concrete gaps.
+All are binding.
+
+1. **The operator guard applies to every caller-controlled object**, not only
+   `aggregate`'s pipeline. A `find` filter accepts `$where` and
+   `$expr: {$function}` — server-side JavaScript — and projections accept
+   aggregation expressions. `filter`, `projection`, `sort` and `pipeline` all go
+   through the same recursive walk before any command is built.
+2. **Lookup stages are scoped to the allowlist.** `$lookup.from`,
+   `$graphLookup.from` and `$unionWith.coll` may name only `webhooks` or
+   `messages`; the `{db, coll}` cross-database form is refused. Without this the
+   `collection` enum scopes only the primary collection.
+3. **Browser-borne use of a legitimate peer is refused.** The IP gate checks the
+   TCP peer, and a web page loaded in the browser of a user on the allowed
+   network makes requests from that peer. Two closures: any request carrying an
+   `Origin` header is rejected (browsers send it on every POST, including
+   same-origin ones after a DNS rebind; MCP clients never do), and the SDK's
+   DNS-rebinding protection enforces a Host allowlist from `MCP_ALLOWED_HOSTS`
+   (localhost forms always included). The app's global wildcard `cors()` is
+   removed — nothing here is cross-origin, and it answered preflights before
+   the gate ran.
+4. **Results are streamed to a budget, not materialised.** `toArray()` before
+   truncation would hold an unbounded aggregate result in the process that also
+   hosts webhook ingestion. Cursors are drained one document at a time and
+   closed at the first bound hit. `skip` is capped at 10,000 and concurrent
+   queries at 4.
+
 ## Out of scope
 
 - A separate read-only MongoDB user (considered, explicitly declined).
