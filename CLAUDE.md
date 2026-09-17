@@ -11,11 +11,13 @@ npm start                  # App only, no reload
 
 node scripts/migrate-indexes.js            # dry run: print the index plan
 node scripts/migrate-indexes.js --apply    # create new indexes, then drop dead ones
+
+npm test                   # node --test; no framework, no build step
 ```
 
 Docker Compose bind-mounts `./server`, `./public`, and `./.env`, so edits reload live inside the container. Copy `.env.sample` to `.env` first; `MAILGUN_API_KEY` doubles as both the webhook signing key and the HTTP Basic password used to fetch stored message bodies.
 
-There is no test suite, linter, or build step — the frontend is plain HTML/CSS/JS served straight from `public/`.
+There is no linter or build step; `npm test` runs Node's built-in test runner.
 
 ## Architecture
 
@@ -29,6 +31,32 @@ Express + Mongoose app with two halves that meet in MongoDB:
 - `message.html` + `js/message.js` → `GET /api/messages/:id` (`:id` is the Mailgun message-id, not a Mongo `_id`), rendering the stored body in a sandboxed iframe
 
 Search state round-trips through the URL: the list page writes filters as query params, and links into `event.html` re-encode them with a `search_` prefix so the back link can restore them.
+
+**Agent queries** (`server/mcp/`, mounted at `POST /mcp`) — a read-only MCP
+endpoint. Four tools (`find`, `aggregate`, `count`, `describe_collection`) pass
+queries to the raw driver; `server/mcp/instructions.js` carries the schema
+guidance the agent receives at `initialize`.
+
+Every query is planned with a `queryPlanner` explain before it runs, and
+`server/mcp/explain.js` classifies the plan by the **index bounds on the leading
+field**, not by stage name. That distinction matters: the unanchored
+case-insensitive regex — the 22-second query in `docs/PERFORMANCE.md` — plans as
+`IXSCAN`, so a COLLSCAN check would pass the worst query shape here straight
+through. A flagged query returns its warning instead of results and runs only on
+an explicit `allowFullScan: true`.
+
+Read-only is enforced in code, not by a database user: `$out`, `$merge`,
+`$function`, `$where` and `$accumulator` are rejected anywhere in ANY
+caller-controlled object — filter, projection, sort and pipeline — including
+nested inside `$facet`, `$lookup`, `$unionWith` and `$expr`. Lookup stages may
+only target `webhooks` or `messages`. Results are drained one document at a
+time to a byte and count budget, never `toArray()`'d, because this process also
+hosts webhook ingestion.
+
+The router refuses any request with an `Origin` header and enforces a Host
+allowlist (`MCP_ALLOWED_HOSTS`). Both exist because the IP gate checks the TCP
+peer, and a browser on the allowed network lends that position to any page it
+loads. Global CORS was removed for the same reason.
 
 ### Access control
 
@@ -109,4 +137,4 @@ Not perf-related, and not addressed:
   `subject` straight into `innerHTML`. Those values come from inbound webhook
   payloads, so a crafted subject line is stored XSS against anyone viewing the
   list. The same pattern is in `event.js`.
-- `.gitignore` is empty — `node_modules/` and `.env` are untracked only by luck.
+- `.gitignore` was empty for years; it now covers `node_modules/`, `.env`, and the `.superpowers/` scratch directory.

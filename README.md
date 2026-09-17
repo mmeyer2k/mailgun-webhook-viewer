@@ -1,2 +1,32 @@
 # mailgun-webhook-viewer
 An endpoint to collect and view Mailgun webhooks
+
+## MCP endpoint (read-only, for AI agents)
+
+`POST /mcp` exposes the webhook archive to MCP-capable agents as a read-only
+query interface. It is behind the same IP gate as the web UI, so it is reachable
+only from the private/Tailscale ranges.
+
+Add it to Claude Code:
+
+```bash
+claude mcp add --transport http mailgun http://<tailscale-host>:3000/mcp
+```
+
+Tools: `describe_collection`, `find`, `count`, `aggregate`. Usage guidance —
+the schema traps, which queries are index-backed — is delivered to the agent
+automatically in the MCP `instructions` block; there is no separate doc to read.
+
+Queries are planned before they run. Anything that would scan the collection or
+walk an entire index comes back with `requiresConfirmation: true` and is not
+executed; re-call with `allowFullScan: true` to override.
+
+If a client reports `406 Not Acceptable`, it is not sending
+`Accept: application/json, text/event-stream`, which the protocol requires.
+
+**`MCP_ALLOWED_HOSTS` is required for anything but localhost.** The endpoint
+enforces a Host allowlist (exact match, port included) as DNS-rebinding
+protection, and refuses any request carrying an `Origin` header. List every
+host:port your clients will type, e.g.
+`MCP_ALLOWED_HOSTS=mailgun.your-tailnet.ts.net:3000,100.64.12.34:3000`. A `403`
+mentioning `Host` means the value the client used is not on the list.
