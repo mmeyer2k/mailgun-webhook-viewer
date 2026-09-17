@@ -32,7 +32,24 @@ Search state round-trips through the URL: the list page writes filters as query 
 
 ### Access control
 
-`ipCheckMiddleware` (`server/middleware/ipCheck.js`) is registered as `app.get('/*', ...)` in `index.js`, so it gates **every GET** — static files and `/api` alike — to private/CGNAT ranges (the list includes `100.64.0.0/10`, the CGNAT range Tailscale hands out). `POST /webhook` is deliberately not covered; its only protection is the signature check. Any new read route is automatically behind the IP gate; any new write route is not.
+`ipCheckMiddleware` (`server/middleware/ipCheck.js`) is registered as
+`app.use(ipCheckMiddleware)` in `index.js`, positioned *after* `/webhook` and
+*before* everything else. So it gates **every method on every route** — static
+files, `/api`, and `/mcp` — to private/CGNAT ranges (the list includes
+`100.64.0.0/10`, the CGNAT range Tailscale hands out, and `::1/128`, which is
+what a dual-stack `localhost` connection actually arrives as).
+
+`POST /webhook` is public by *position*: it is mounted above the gate, because
+Mailgun delivers over the internet. Its only protection is the signature check.
+Any new route mounted below the gate is automatically covered; a new route
+mounted above it is not.
+
+The gate reads `req.socket.remoteAddress` and deliberately ignores
+`X-Forwarded-For`. Reading that header is how this check used to work, and it
+meant anyone who could reach the port could forge a private address. There is
+no reverse proxy in production; if one is ever added, give the gate an
+explicitly configured hop count from the right of the header rather than
+restoring a blind first-value read.
 
 ## Scale
 

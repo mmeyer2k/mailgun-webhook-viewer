@@ -14,11 +14,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Apply IP check to all GET requests for static files
-app.get('/*', ipCheckMiddleware);
+// Mailgun posts here from the public internet, so this route is deliberately
+// NOT behind the IP gate — its protection is the HMAC signature check. It is
+// mounted ABOVE the gate so that position, not HTTP method, is what keeps it
+// public.
+app.use('/webhook', webhookRoutes);
 
-// Serve static files after IP check
+// Everything below this line is gated to private/Tailscale ranges, for EVERY
+// method. This previously read app.get('/*', ...), which covered GET only.
+app.use(ipCheckMiddleware);
+
 app.use(express.static(path.join(__dirname, '../public')));
+app.use('/api', apiRoutes);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
@@ -34,10 +41,6 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
-
-// Routes
-app.use('/webhook', webhookRoutes);
-app.use('/api', apiRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
