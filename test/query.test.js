@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const mongoose = require('mongoose');
-const { assertReadOnlyPipeline, coerceIds, truncateDocs } = require('../server/mcp/query');
+const {
+  assertReadOnlyPipeline,
+  assertNoForbiddenOperators,
+  coerceIds,
+  collectBounded,
+  COLLECTIONS,
+} = require('../server/mcp/query');
 
 test('allows a legitimate pipeline', () => {
   assert.doesNotThrow(() => assertReadOnlyPipeline([
@@ -76,24 +82,140 @@ test('leaves other fields untouched and does not mutate the input', () => {
   assert.notStrictEqual(out, input);
 });
 
-test('returns everything when under the byte cap', () => {
-  const docs = [{ a: 1 }, { a: 2 }];
-  const r = truncateDocs(docs, 100000);
+// ---------------------------------------------------------------------------
+// Operator guard on non-pipeline objects. find/count filters accept $where and
+// $expr:{$function} — server-side JavaScript — so the same walk must cover them.
+// ---------------------------------------------------------------------------
+
+test('rejects $where in a find filter', () => {
+  assert.throws(() => assertNoForbiddenOperators({ recipient: 'a@b.com', $where: 'sleep(1)' }, 'filter'),
+    /\$where.*filter/);
+});
+
+test('rejects $function nested under $expr in a filter', () => {
+  assert.throws(() => assertNoForbiddenOperators(
+    { $expr: { $function: { body: 'function(){return true}', args: [], lang: 'js' } } }, 'filter'),
+    /\$function/);
+});
+
+test('rejects $function in a projection', () => {
+  assert.throws(() => assertNoForbiddenOperators(
+    { x: { $function: { body: 'function(){}', args: [], lang: 'js' } } }, 'projection'),
+    /\$function.*projection/);
+});
+
+test('allows an ordinary filter with $regex, $in and ranges', () => {
+  assert.doesNotThrow(() => assertNoForbiddenOperators({
+    recipient: { $regex: '^user5' },
+    event: { $in: ['delivered', 'opened'] },
+    timestamp: { $gte: 1, $lte: 2 },
+  }, 'filter'));
+});
+
+// ---------------------------------------------------------------------------
+// Lookup-stage targets. The collection enum only scopes the PRIMARY collection;
+// these stages name another one and must be held to the same list.
+// ---------------------------------------------------------------------------
+
+test('rejects $unionWith targeting a collection outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $limit: 1 },
+    { $unionWith: { coll: 'system.users', pipeline: [] } },
+  ]), /\$unionWith.*system\.users/);
+});
+
+test('rejects $lookup from a collection outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $lookup: { from: 'secrets', localField: 'a', foreignField: 'b', as: 'x' } },
+  ]), /\$lookup.*secrets/);
+});
+
+test('rejects the cross-database {db, coll} lookup form', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $lookup: { from: { db: 'admin', coll: 'system.users' }, pipeline: [], as: 'x' } },
+  ]), /\$lookup/);
+});
+
+test('rejects $graphLookup outside the allowlist', () => {
+  assert.throws(() => assertReadOnlyPipeline([
+    { $graphLookup: { from: 'other', startWith: '$a', connectFromField: 'a', connectToField: 'b', as: 'x' } },
+  ]), /\$graphLookup.*other/);
+});
+
+test('allows $lookup between the two permitted collections', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([
+    { $match: { event: 'delivered' } },
+    { $lookup: { from: 'messages', localField: 'message.headers.message-id', foreignField: 'messageId', as: 'body' } },
+  ]));
+  assert.deepStrictEqual(COLLECTIONS, ['webhooks', 'messages']);
+});
+
+test('allows $lookup with no from (the $documents form)', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([
+    { $lookup: { pipeline: [{ $documents: [{ a: 1 }] }], as: 'x' } },
+  ]));
+});
+
+// ---------------------------------------------------------------------------
+// Bounded cursor collection. Replaces load-everything-then-trim, which could
+// materialise an unbounded aggregate result in the process that also hosts
+// webhook ingestion.
+// ---------------------------------------------------------------------------
+
+function fakeCursor(docs) {
+  let i = 0;
+  return {
+    closed: false,
+    hasNext: async () => i < docs.length,
+    next: async () => docs[i++],
+    close: async function () { this.closed = true; },
+  };
+}
+
+test('collectBounded returns everything when under both caps and closes the cursor', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 1000 });
+  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.truncated, false);
+  assert.deepStrictEqual(r.docs, [{ a: 1 }, { a: 2 }]);
+  assert.strictEqual(c.closed, true);
+});
+
+test('collectBounded stops at the byte cap without reading further', async () => {
+  const docs = Array.from({ length: 500 }, (_, i) => ({ i, pad: 'x'.repeat(200) }));
+  const c = fakeCursor(docs);
+  const r = await collectBounded(c, { maxBytes: 5000, maxDocs: 1000 });
+  assert.strictEqual(r.truncated, true);
+  assert.ok(r.returned > 0 && r.returned < 500);
+  assert.strictEqual(r.docs.length, r.returned);
+  assert.strictEqual(c.closed, true);
+});
+
+test('collectBounded stops at the document cap and reports truncation when more remain', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }, { a: 3 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
+  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.truncated, true);
+});
+
+test('collectBounded does not report truncation when the cap equals the result size', async () => {
+  const c = fakeCursor([{ a: 1 }, { a: 2 }]);
+  const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
   assert.strictEqual(r.returned, 2);
   assert.strictEqual(r.truncated, false);
 });
 
-test('stops at the byte cap and reports truncation', () => {
-  const docs = Array.from({ length: 500 }, (_, i) => ({ i, pad: 'x'.repeat(200) }));
-  const r = truncateDocs(docs, 5000);
+test('collectBounded reports truncation when the first document exceeds the cap', async () => {
+  const c = fakeCursor([{ pad: 'x'.repeat(10000) }]);
+  const r = await collectBounded(c, { maxBytes: 100, maxDocs: 1000 });
+  assert.strictEqual(r.returned, 0);
   assert.strictEqual(r.truncated, true);
-  assert.ok(r.returned < 500);
-  assert.ok(r.returned > 0);
-  assert.strictEqual(r.docs.length, r.returned);
+  assert.strictEqual(c.closed, true);
 });
 
-test('reports truncation even when the first document exceeds the cap', () => {
-  const r = truncateDocs([{ pad: 'x'.repeat(10000) }], 100);
-  assert.strictEqual(r.truncated, true);
-  assert.strictEqual(r.returned, 0);
+test('collectBounded closes the cursor even if iteration throws', async () => {
+  const c = fakeCursor([]);
+  c.hasNext = async () => { throw new Error('boom'); };
+  await assert.rejects(() => collectBounded(c, { maxBytes: 100, maxDocs: 1 }), /boom/);
+  assert.strictEqual(c.closed, true);
 });

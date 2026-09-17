@@ -4,9 +4,10 @@ const { TOOL_DESCRIPTIONS } = require('./instructions');
 const {
   COLLECTIONS,
   DEFAULTS,
+  assertNoForbiddenOperators,
   assertReadOnlyPipeline,
   coerceIds,
-  truncateDocs,
+  collectBounded,
 } = require('./query');
 
 const jsonResult = (payload) => ({
@@ -29,6 +30,25 @@ const collationParam = z
 
 const clampTime = (v) =>
   Math.min(Math.max(Number(v) || DEFAULTS.maxTimeMS, 1), DEFAULTS.maxTimeCeiling);
+
+// One slot per in-flight query across all three tools. This process also
+// serves webhook ingestion; a pile-up of 120-second aggregates must fail
+// fast rather than starve it.
+let inFlight = 0;
+async function withSlot(fn) {
+  if (inFlight >= DEFAULTS.maxConcurrent) {
+    return errorResult(
+      `Too many concurrent queries (limit ${DEFAULTS.maxConcurrent}). Wait for ` +
+      'an in-flight query to finish and retry.'
+    );
+  }
+  inFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    inFlight -= 1;
+  }
+}
 
 /**
  * Plan a command without executing it.
@@ -137,14 +157,22 @@ function registerTools(server, db) {
         projection: z.record(z.string(), z.any()).optional(),
         sort: z.record(z.string(), z.number()).optional(),
         limit: z.number().int().positive().max(DEFAULTS.maxLimit).optional(),
-        skip: z.number().int().nonnegative().optional(),
+        skip: z.number().int().nonnegative().max(DEFAULTS.maxSkip).optional(),
         collation: collationParam,
         hint: z.string().optional(),
         maxTimeMS: z.number().int().positive().optional(),
         allowFullScan: z.boolean().optional(),
       },
     },
-    async (args) => {
+    async (args) => withSlot(async () => {
+      try {
+        assertNoForbiddenOperators(args.filter || {}, 'filter');
+        if (args.projection) assertNoForbiddenOperators(args.projection, 'projection');
+        if (args.sort) assertNoForbiddenOperators(args.sort, 'sort');
+      } catch (err) {
+        return errorResult(err.message);
+      }
+
       let plan = null;
       try {
         const filter = coerceIds(args.filter || {});
@@ -181,8 +209,10 @@ function registerTools(server, db) {
         if (args.collation) cursor.collation(args.collation);
         if (args.hint) cursor.hint(args.hint);
 
-        const docs = await cursor.toArray();
-        const { docs: kept, returned, truncated } = truncateDocs(docs, DEFAULTS.maxBytes);
+        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+          maxBytes: DEFAULTS.maxBytes,
+          maxDocs: limit,
+        });
 
         return jsonResult({
           executed: true,
@@ -195,7 +225,7 @@ function registerTools(server, db) {
       } catch (err) {
         return errorResult(timeoutMessage(err, plan));
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -211,7 +241,13 @@ function registerTools(server, db) {
         allowFullScan: z.boolean().optional(),
       },
     },
-    async (args) => {
+    async (args) => withSlot(async () => {
+      try {
+        assertNoForbiddenOperators(args.filter || {}, 'filter');
+      } catch (err) {
+        return errorResult(err.message);
+      }
+
       let plan = null;
       try {
         const filter = coerceIds(args.filter || {});
@@ -256,7 +292,7 @@ function registerTools(server, db) {
       } catch (err) {
         return errorResult(timeoutMessage(err, plan));
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -273,7 +309,7 @@ function registerTools(server, db) {
         allowFullScan: z.boolean().optional(),
       },
     },
-    async (args) => {
+    async (args) => withSlot(async () => {
       try {
         assertReadOnlyPipeline(args.pipeline);
       } catch (err) {
@@ -303,10 +339,11 @@ function registerTools(server, db) {
         if (args.collation) options.collation = args.collation;
         if (args.hint) options.hint = args.hint;
 
-        const docs = await db.collection(args.collection)
-          .aggregate(args.pipeline, options)
-          .toArray();
-        const { docs: kept, returned, truncated } = truncateDocs(docs, DEFAULTS.maxBytes);
+        const cursor = db.collection(args.collection).aggregate(args.pipeline, options);
+        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+          maxBytes: DEFAULTS.maxBytes,
+          maxDocs: DEFAULTS.maxLimit,
+        });
 
         return jsonResult({
           executed: true,
@@ -319,7 +356,7 @@ function registerTools(server, db) {
       } catch (err) {
         return errorResult(timeoutMessage(err, plan));
       }
-    }
+    })
   );
 }
 

@@ -8,6 +8,11 @@ const DEFAULTS = {
   maxTimeMS: 15000,
   maxTimeCeiling: 120000,
   maxBytes: 100000,
+  // skip() walks every key it skips. api.js caps reachable depth the same way.
+  maxSkip: 10000,
+  // This process also hosts webhook ingestion. A handful of 120s analytical
+  // queries is fine; an unbounded number is how one caller takes it down.
+  maxConcurrent: 4,
 };
 
 // Stages that write to a collection.
@@ -16,18 +21,36 @@ const WRITE_STAGES = ['$out', '$merge'];
 const JS_OPERATORS = ['$function', '$where', '$accumulator'];
 const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS];
 
-/**
- * Reject write stages and server-side JavaScript anywhere in a pipeline.
- *
- * This recurses into every nested object and array, because $out, $merge and
- * friends can hide inside $facet, $lookup.pipeline and $unionWith.pipeline. A
- * top-level-only scan is trivially bypassed.
- */
-function assertReadOnlyPipeline(pipeline) {
-  if (!Array.isArray(pipeline)) {
-    throw new Error('pipeline must be an array of aggregation stages');
-  }
+// Stages that read from ANOTHER collection. The `collection` tool parameter
+// only scopes the primary collection; these must be held to the same list.
+const LOOKUP_STAGES = ['$lookup', '$graphLookup', '$unionWith'];
 
+function assertLookupTarget(stage, spec) {
+  if (!spec || typeof spec !== 'object') return;
+  // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is the
+  // $documents form, which reads no collection and is fine.
+  const target = spec.from !== undefined ? spec.from : spec.coll;
+  if (target === undefined) return;
+  if (typeof target !== 'string' || !COLLECTIONS.includes(target)) {
+    throw new Error(
+      `${stage} may only target ${COLLECTIONS.join(' or ')}; got ` +
+      `${JSON.stringify(target)}. The cross-database {db, coll} form is not permitted.`
+    );
+  }
+}
+
+/**
+ * Reject write stages, server-side JavaScript, and out-of-scope lookup
+ * targets anywhere in a user-supplied query object.
+ *
+ * This is the read-only boundary. There is no read-only database user behind
+ * this endpoint, so the walk has to be complete: it recurses into every nested
+ * object and array, because $out and $function can hide inside $facet,
+ * $lookup.pipeline, $unionWith.pipeline, and $expr. It applies to EVERY object
+ * the caller controls — filter, projection, sort and pipeline alike — because
+ * a find filter accepts $where and $expr:{$function} just as a pipeline does.
+ */
+function assertNoForbiddenOperators(value, what = 'query') {
   (function walk(node) {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
@@ -37,14 +60,24 @@ function assertReadOnlyPipeline(pipeline) {
     for (const key of Object.keys(node)) {
       if (FORBIDDEN.includes(key)) {
         throw new Error(
-          `${key} is not permitted: this endpoint is read-only. ` +
-          `Forbidden anywhere in a pipeline, including nested inside $facet, ` +
-          `$lookup.pipeline and $unionWith.pipeline: ${FORBIDDEN.join(', ')}.`
+          `${key} is not permitted in ${what}: this endpoint is read-only and ` +
+          `does not execute server-side JavaScript. Forbidden anywhere, at any ` +
+          `depth: ${FORBIDDEN.join(', ')}.`
         );
+      }
+      if (LOOKUP_STAGES.includes(key)) {
+        assertLookupTarget(key, node[key]);
       }
       walk(node[key]);
     }
-  })(pipeline);
+  })(value);
+}
+
+function assertReadOnlyPipeline(pipeline) {
+  if (!Array.isArray(pipeline)) {
+    throw new Error('pipeline must be an array of aggregation stages');
+  }
+  assertNoForbiddenOperators(pipeline, 'pipeline');
 }
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
@@ -75,32 +108,45 @@ function coerceIds(filter) {
 }
 
 /**
- * Serialize documents up to a byte budget.
+ * Drain a cursor up to a byte budget and a document count, then close it.
  *
- * A large result set would exhaust the agent's context window before it could
- * summarize anything, so the response channel is bounded independently of the
- * query.
+ * The previous shape — toArray() then trim — materialised the ENTIRE result
+ * before trimming. An aggregate with no $limit over 100M documents would try
+ * to hold all of it in the Node process that also runs webhook ingestion.
+ * Reading one document at a time and stopping at the first bound hit keeps
+ * peak memory proportional to the budget, not the result.
  */
-function truncateDocs(docs, maxBytes = DEFAULTS.maxBytes) {
-  const kept = [];
+async function collectBounded(cursor, { maxBytes = DEFAULTS.maxBytes, maxDocs = DEFAULTS.maxLimit } = {}) {
+  const docs = [];
   let bytes = 0;
+  let truncated = false;
 
-  for (const doc of docs) {
-    const size = Buffer.byteLength(JSON.stringify(doc), 'utf8');
-    if (bytes + size > maxBytes) {
-      return { docs: kept, returned: kept.length, truncated: true };
+  try {
+    while (docs.length < maxDocs && (await cursor.hasNext())) {
+      const doc = await cursor.next();
+      const size = Buffer.byteLength(JSON.stringify(doc), 'utf8');
+      if (bytes + size > maxBytes) {
+        truncated = true;
+        break;
+      }
+      docs.push(doc);
+      bytes += size;
     }
-    kept.push(doc);
-    bytes += size;
+    if (!truncated && docs.length >= maxDocs && (await cursor.hasNext())) {
+      truncated = true;
+    }
+  } finally {
+    await Promise.resolve(cursor.close()).catch(() => {});
   }
 
-  return { docs: kept, returned: kept.length, truncated: false };
+  return { docs, returned: docs.length, truncated };
 }
 
 module.exports = {
   COLLECTIONS,
   DEFAULTS,
+  assertNoForbiddenOperators,
   assertReadOnlyPipeline,
   coerceIds,
-  truncateDocs,
+  collectBounded,
 };
