@@ -51,13 +51,46 @@ whatever is actually stored. The one behaviour added back is coercing a
 
 ### The IP gate
 
-`server/index.js` registers the IP check as `app.get('/*', ipCheckMiddleware)`.
-MCP uses **POST**, so the existing registration does not cover it. The MCP
-router must apply `ipCheckMiddleware` explicitly.
+`/mcp` is reached over Tailscale, exactly like the web UI. Only `POST /webhook`
+is served over the public internet. The IP gate is therefore the entire access
+control story for this endpoint, and it has two defects to address.
 
-Getting this wrong makes `/mcp` the only unauthenticated read path in the
-application — worse than `POST /webhook`, which at least verifies a signature.
-This is the single highest-consequence line in the change.
+**1. The existing registration does not cover POST.** `server/index.js`
+registers the check as `app.get('/*', ipCheckMiddleware)`. MCP uses POST, so
+the MCP router must apply the middleware explicitly. Missing this makes `/mcp`
+the only unauthenticated read path in the application — weaker than
+`POST /webhook`, which at least verifies a signature.
+
+**2. The current check trusts a forgeable header.**
+`server/middleware/ipCheck.js` reads `req.headers['x-forwarded-for']` first and
+unconditionally, and no `trust proxy` setting exists anywhere in `server/`. It
+therefore validates a client-supplied string rather than the actual peer.
+Measured against the real middleware:
+
+```
+200  X-Forwarded-For: 10.0.0.1          (forged private)
+200  X-Forwarded-For: 100.101.102.103   (forged Tailscale CGNAT)
+403  X-Forwarded-For: 8.8.8.8
+```
+
+The listening port is necessarily reachable from the public internet, because
+that is how Mailgun delivers webhooks. Anyone who can reach it can therefore
+send that header and pass the gate.
+
+**The MCP router gates on the real TCP peer** — `req.socket.remoteAddress` —
+and ignores `X-Forwarded-For` entirely. Over Tailscale the peer address *is*
+the `100.64.0.0/10` address, so the gate works exactly as intended and cannot
+be forged: an attacker has to actually be on the tailnet. This ships as a new
+`strictIpCheck` middleware rather than a change to the shared one, so the MCP
+endpoint's guarantee does not depend on the deployment topology of the web UI.
+
+If a reverse proxy is ever placed in front of `/mcp`, the peer becomes the
+proxy and the gate must then be given an explicit, configured trusted-proxy
+hop count — never an unconditional header read.
+
+> **Note, outside this change's scope:** defect 2 applies today to the web UI
+> and `/api` through the shared middleware. The MCP work does not introduce it
+> and does not fix it. Tracked separately.
 
 ### New dependencies
 
@@ -239,13 +272,15 @@ count("webhooks", {
 ## Files
 
 ```
-server/mcp/index.js         router, transport wiring, ipCheck
+server/mcp/index.js         router, transport wiring
+server/mcp/strictIpCheck.js peer-address IP gate (ignores X-Forwarded-For)
 server/mcp/tools.js         tool definitions and handlers
 server/mcp/query.js         sanitization, _id coercion, execution, truncation
 server/mcp/explain.js       explain command + plan analysis
 server/mcp/instructions.js  the instructions string
 test/explain.test.js
 test/query.test.js
+test/strictIpCheck.test.js
 ```
 
 Modified: `server/index.js` (mount the router), `package.json` (deps,
@@ -270,6 +305,9 @@ rather than loud:
   left alone; `{$in: [...]}` is handled element-wise.
 - **Truncation**: under the cap returns everything with `truncated: false`;
   over the cap stops at the boundary and reports `truncated: true`.
+- **`strictIpCheck`**: a forged `X-Forwarded-For` naming a private or CGNAT
+  address is rejected when the peer is public; a genuine `100.64.0.0/10` peer
+  is allowed. This is the regression test for the defect above.
 
 Integration against a live MongoDB is out of scope for the automated suite; it
 requires `docker compose up` and is verified manually.
