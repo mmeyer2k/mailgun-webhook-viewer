@@ -4,6 +4,7 @@ const { TOOL_DESCRIPTIONS } = require('./instructions');
 const {
   COLLECTIONS,
   DEFAULTS,
+  DEFAULT_EXCLUDED_FIELDS,
   assertNoForbiddenOperators,
   assertReadOnlyPipeline,
   coerceIds,
@@ -27,6 +28,26 @@ const collectionParam = z.enum(COLLECTIONS);
 const collationParam = z
   .object({ locale: z.string(), strength: z.number().optional() })
   .optional();
+// Filters, projections and pipeline stages are arbitrary MongoDB documents;
+// the operator guard, not the schema, decides what is allowed inside them.
+const anyObject = z.record(z.string(), z.any());
+// The knobs every query tool takes. One shape, so a new knob or a changed
+// bound lands in all three tools at once.
+const guardParams = {
+  collation: collationParam,
+  hint: z.string().optional(),
+  maxTimeMS: z.number().int().positive().optional(),
+  allowFullScan: z.boolean().optional(),
+};
+
+// Copy the caller's collation and hint onto a command or options object. The
+// explained command and the executed one both go through here, which is how
+// they are kept identical.
+function applyCollationAndHint(target, args) {
+  if (args.collation) target.collation = args.collation;
+  if (args.hint) target.hint = args.hint;
+  return target;
+}
 
 const clampTime = (v) =>
   Math.min(Math.max(Number(v) || DEFAULTS.maxTimeMS, 1), DEFAULTS.maxTimeCeiling);
@@ -146,8 +167,7 @@ function registerTools(server, db) {
     async ({ collection }) => {
       try {
         const col = db.collection(collection);
-        const indexes = await col.indexes();
-        const count = await col.estimatedDocumentCount();
+        const [indexes, count] = await Promise.all([col.indexes(), col.estimatedDocumentCount()]);
         return jsonResult({
           collection,
           estimatedDocumentCount: count,
@@ -171,15 +191,12 @@ function registerTools(server, db) {
       description: TOOL_DESCRIPTIONS.find,
       inputSchema: {
         collection: collectionParam,
-        filter: z.record(z.string(), z.any()).optional(),
-        projection: z.record(z.string(), z.any()).optional(),
+        filter: anyObject.optional(),
+        projection: anyObject.optional(),
         sort: z.record(z.string(), z.number()).optional(),
         limit: z.number().int().positive().max(DEFAULTS.maxLimit).optional(),
         skip: z.number().int().nonnegative().max(DEFAULTS.maxSkip).optional(),
-        collation: collationParam,
-        hint: z.string().optional(),
-        maxTimeMS: z.number().int().positive().optional(),
-        allowFullScan: z.boolean().optional(),
+        ...guardParams,
       },
     },
     async (args) => withSlot(async () => {
@@ -197,18 +214,16 @@ function registerTools(server, db) {
         const limit = Math.min(args.limit || DEFAULTS.limit, DEFAULTS.maxLimit);
         const maxTimeMS = clampTime(args.maxTimeMS);
 
-        // `messages` bodies are large enough to exhaust an agent's context.
         let projection = args.projection;
-        if (args.collection === 'messages' && !projection) {
-          projection = { 'body-html': 0, 'body-plain': 0 };
+        const excluded = DEFAULT_EXCLUDED_FIELDS[args.collection];
+        if (excluded && !projection) {
+          projection = Object.fromEntries(excluded.map((field) => [field, 0]));
         }
 
-        const command = { find: args.collection, filter, limit };
+        const command = applyCollationAndHint({ find: args.collection, filter, limit }, args);
         if (args.sort) command.sort = args.sort;
         if (args.skip) command.skip = args.skip;
         if (projection) command.projection = projection;
-        if (args.collation) command.collation = args.collation;
-        if (args.hint) command.hint = args.hint;
 
         const guard = await planAndGuard(db, command, {
           hasFilter: Object.keys(filter).length > 0,
@@ -227,7 +242,7 @@ function registerTools(server, db) {
         if (args.collation) cursor.collation(args.collation);
         if (args.hint) cursor.hint(args.hint);
 
-        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+        const { docs: kept, truncated } = await collectBounded(cursor, {
           maxBytes: DEFAULTS.maxBytes,
           maxDocs: limit,
         });
@@ -237,7 +252,7 @@ function registerTools(server, db) {
           plan: { scanType: plan.scanType, indexUsed: plan.indexUsed },
           warnings: plan.warnings,
           notes: plan.notes || [],
-          returned,
+          returned: kept.length,
           truncated,
           documents: kept,
         });
@@ -253,11 +268,8 @@ function registerTools(server, db) {
       description: TOOL_DESCRIPTIONS.count,
       inputSchema: {
         collection: collectionParam,
-        filter: z.record(z.string(), z.any()).optional(),
-        collation: collationParam,
-        hint: z.string().optional(),
-        maxTimeMS: z.number().int().positive().optional(),
-        allowFullScan: z.boolean().optional(),
+        filter: anyObject.optional(),
+        ...guardParams,
       },
     },
     async (args) => withSlot(async () => {
@@ -288,9 +300,7 @@ function registerTools(server, db) {
         // the obvious call, but the 3.x driver implements it as
         // aggregate([{$match}, {$group}]) — so the tool would report the plan
         // of a `count` command and then run an aggregate with a different one.
-        const command = { count: args.collection, query: filter, maxTimeMS };
-        if (args.collation) command.collation = args.collation;
-        if (args.hint) command.hint = args.hint;
+        const command = applyCollationAndHint({ count: args.collection, query: filter, maxTimeMS }, args);
 
         const guard = await planAndGuard(db, command, {
           hasFilter: true,
@@ -323,12 +333,9 @@ function registerTools(server, db) {
       description: TOOL_DESCRIPTIONS.aggregate,
       inputSchema: {
         collection: collectionParam,
-        pipeline: z.array(z.record(z.string(), z.any())),
-        collation: collationParam,
-        hint: z.string().optional(),
+        pipeline: z.array(anyObject),
         allowDiskUse: z.boolean().optional(),
-        maxTimeMS: z.number().int().positive().optional(),
-        allowFullScan: z.boolean().optional(),
+        ...guardParams,
       },
     },
     async (args) => withSlot(async () => {
@@ -357,16 +364,14 @@ function registerTools(server, db) {
         const hasFilter = Boolean(first && first.$match && Object.keys(first.$match).length > 0);
         const hasLimit = pipeline.some((s) => s && s.$limit);
 
-        const command = {
+        const command = applyCollationAndHint({
           aggregate: args.collection,
           pipeline,
           cursor: {},
           // allowDiskUse changes what the planner may choose for a blocking
           // stage, so the explained command has to carry it too.
           allowDiskUse: Boolean(args.allowDiskUse),
-        };
-        if (args.collation) command.collation = args.collation;
-        if (args.hint) command.hint = args.hint;
+        }, args);
 
         const guard = await planAndGuard(db, command, {
           hasFilter,
@@ -376,12 +381,10 @@ function registerTools(server, db) {
         plan = guard.plan;
         if (guard.blocked) return blockedResult(plan);
 
-        const options = { maxTimeMS, allowDiskUse: Boolean(args.allowDiskUse) };
-        if (args.collation) options.collation = args.collation;
-        if (args.hint) options.hint = args.hint;
+        const options = applyCollationAndHint({ maxTimeMS, allowDiskUse: Boolean(args.allowDiskUse) }, args);
 
         const cursor = db.collection(args.collection).aggregate(pipeline, options);
-        const { docs: kept, returned, truncated } = await collectBounded(cursor, {
+        const { docs: kept, truncated } = await collectBounded(cursor, {
           maxBytes: DEFAULTS.maxBytes,
           maxDocs: DEFAULTS.maxLimit,
         });
@@ -391,7 +394,7 @@ function registerTools(server, db) {
           plan: { scanType: plan.scanType, indexUsed: plan.indexUsed },
           warnings: plan.warnings,
           notes: plan.notes || [],
-          returned,
+          returned: kept.length,
           truncated,
           documents: kept,
         });
