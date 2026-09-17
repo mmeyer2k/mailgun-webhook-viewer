@@ -26,10 +26,19 @@ const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS];
 const LOOKUP_STAGES = ['$lookup', '$graphLookup', '$unionWith'];
 
 function assertLookupTarget(stage, spec) {
-  if (!spec || typeof spec !== 'object') return;
-  // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is the
-  // $documents form, which reads no collection and is fine.
-  const target = spec.from !== undefined ? spec.from : spec.coll;
+  // $unionWith accepts a bare string as shorthand for { coll: "<name>" };
+  // $lookup and $graphLookup are object-only. Normalise to the target name
+  // first, then hold every form to the same list.
+  let target;
+  if (typeof spec === 'string') {
+    target = spec;
+  } else if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
+    // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is
+    // the $documents form, which reads no collection and is fine.
+    target = spec.from !== undefined ? spec.from : spec.coll;
+  } else {
+    return;
+  }
   if (target === undefined) return;
   if (typeof target !== 'string' || !COLLECTIONS.includes(target)) {
     throw new Error(

@@ -124,6 +124,17 @@ test('rejects $unionWith targeting a collection outside the allowlist', () => {
   ]), /\$unionWith.*system\.users/);
 });
 
+test('rejects the $unionWith string shorthand outside the allowlist', () => {
+  // { $unionWith: "name" } is MongoDB shorthand for { $unionWith: { coll: "name" } }.
+  // A guard that only inspects object specs waves this straight through.
+  assert.throws(() => assertReadOnlyPipeline([{ $limit: 1 }, { $unionWith: 'secrets' }]),
+    /\$unionWith.*secrets/);
+});
+
+test('allows the $unionWith string shorthand for a permitted collection', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([{ $limit: 1 }, { $unionWith: 'messages' }]));
+});
+
 test('rejects $lookup from a collection outside the allowlist', () => {
   assert.throws(() => assertReadOnlyPipeline([
     { $lookup: { from: 'secrets', localField: 'a', foreignField: 'b', as: 'x' } },
