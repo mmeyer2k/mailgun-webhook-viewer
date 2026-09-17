@@ -1,3 +1,37 @@
+:root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-alt: #f8f9fa;
+    --border: #dee2e6;
+    --text: #212529;
+    --text-muted: #666666;
+    --accent: #007bff;
+    --accent-hover: #0056b3;
+    --shadow-color: rgba(0, 0, 0, 0.1);
+    --shadow-color-strong: rgba(0, 0, 0, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1a1a1a;
+        --surface: #242424;
+        --surface-alt: #2a2a2a;
+        --border: #3a3a3a;
+        --text: #e4e4e4;
+        --text-muted: #9a9a9a;
+        --accent: #3b9eff;
+        --accent-hover: #62b1ff;
+        --shadow-color: rgba(0, 0, 0, 0.4);
+        --shadow-color-strong: rgba(0, 0, 0, 0.5);
+    }
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+}
+
 h1 {
     font-size: 1.5em;
     margin: 0;
@@ -21,19 +55,24 @@ h1 {
 
 input, button {
     padding: 8px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 4px;
 }
 
+input {
+    background: var(--surface);
+    color: var(--text);
+}
+
 button {
-    background-color: #007bff;
+    background-color: var(--accent);
     color: white;
     border: none;
     cursor: pointer;
 }
 
 button:hover {
-    background-color: #0056b3;
+    background-color: var(--accent-hover);
 }
 
 .clear-button {
@@ -49,12 +88,12 @@ button:hover {
 }
 
 .webhook-item {
-    border-left: 4px solid #ddd;
+    border-left: 4px solid var(--border);
     padding: 12px 15px;
     margin-bottom: 10px;
     border-radius: 4px;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    background: var(--surface);
+    box-shadow: 0 1px 3px var(--shadow-color);
     display: flex;
     align-items: center;
     gap: 20px;
@@ -119,11 +158,11 @@ button:hover {
 }
 
 .webhook-detail {
-    background: #f8f9fa;
+    background: var(--surface-alt);
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 0.9em;
-    color: #444;
+    color: var(--text-muted);
     white-space: nowrap;
 }
 
@@ -137,7 +176,7 @@ button:hover {
 }
 
 .pagination-ellipsis {
-    color: #666;
+    color: var(--text-muted);
     padding: 0 5px;
 }
 
@@ -152,7 +191,7 @@ button:hover {
 }
 
 .page-button.active {
-    background-color: #0056b3;
+    background-color: var(--accent-hover);
 }
 
 /* Message Details Page */
@@ -166,13 +205,13 @@ button:hover {
 
 .back-link {
     text-decoration: none;
-    color: #007bff;
+    color: var(--accent);
     margin-right: 20px;
     white-space: nowrap;
 }
 
 .message-header {
-    background: #f8f9fa;
+    background: var(--surface-alt);
     padding: 20px;
     border-radius: 4px;
     margin-bottom: 20px;
@@ -205,7 +244,7 @@ button:hover {
 
 .content-tabs {
     margin-bottom: 20px;
-    border-bottom: 1px solid #dee2e6;
+    border-bottom: 1px solid var(--border);
     display: flex;
     gap: 10px;
 }
@@ -216,19 +255,19 @@ button:hover {
     background: none;
     cursor: pointer;
     margin-right: 10px;
-    color: #666;
+    color: var(--text-muted);
 }
 
 .tab-button.active {
-    border-bottom: 2px solid #007bff;
-    color: #007bff;
+    border-bottom: 2px solid var(--accent);
+    color: var(--accent);
     font-weight: bold;
 }
 
 .content-panel {
     display: none;
     padding: 20px;
-    border: 1px solid #dee2e6;
+    border: 1px solid var(--border);
     border-radius: 4px;
 }
 
@@ -237,6 +276,9 @@ button:hover {
 }
 
 #htmlFrame {
+    /* Stored email HTML assumes a light page and usually sets only its own
+       text color, so this iframe stays light regardless of site theme. */
+    color-scheme: light;
     width: 100%;
     min-height: 500px;
     border: none;
@@ -246,7 +288,7 @@ button:hover {
 pre {
     white-space: pre-wrap;
     word-wrap: break-word;
-    background: #f8f9fa;
+    background: var(--surface-alt);
     padding: 15px;
     border-radius: 4px;
 }
@@ -263,7 +305,7 @@ pre {
     top: 0;
     bottom: 0;
     width: 2px;
-    background: #dee2e6;
+    background: var(--border);
 }
 
 .timeline-event {
@@ -271,8 +313,8 @@ pre {
     margin-left: 70px;
     padding: 15px;
     margin-bottom: 15px;
-    background: white;
-    border: 1px solid #dee2e6;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
     transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
@@ -289,7 +331,7 @@ pre {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    background: #007bff;
+    background: var(--accent);
     transform: translateY(-50%);
 }
 
@@ -302,7 +344,7 @@ pre {
 .timeline-event.unsubscribed::before { background: #6c757d; }
 
 .timeline-time {
-    color: #666;
+    color: var(--text-muted);
     font-size: 0.9em;
     margin: 0;
 }
@@ -310,7 +352,7 @@ pre {
 .timeline-details {
     margin: 0;
     font-size: 0.9em;
-    color: #666;
+    color: var(--text-muted);
 }
 
 .event-badge {
@@ -333,7 +375,7 @@ pre {
 .event-badge.unsubscribed { background-color: #6c757d; }
 
 .event-details {
-    background: #f8f9fa;
+    background: var(--surface-alt);
     padding: 15px;
     border-radius: 4px;
     margin: 15px 0;
@@ -341,7 +383,7 @@ pre {
 
 .event-details dt {
     font-weight: bold;
-    color: #666;
+    color: var(--text-muted);
     margin-bottom: 5px;
 }
 
@@ -352,20 +394,20 @@ pre {
 
 .timeline-event:hover {
     transform: translateY(-2px);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .timeline-event.current {
-    border: 2px solid #007bff;
-    background-color: #f8f9fa;
+    border: 2px solid var(--accent);
+    background-color: var(--surface-alt);
 }
 
 .timeline-event.current::before {
-    border: 2px solid #fff;
+    border: 2px solid var(--bg);
 }
 
 .recipient-link {
-    color: #007bff;
+    color: var(--accent);
     text-decoration: none;
 }
 
@@ -377,7 +419,7 @@ pre {
 .total-results {
     margin-top: 10px;
     text-align: center;
-    color: #666;
+    color: var(--text-muted);
     font-size: 0.9em;
 }
 
@@ -397,14 +439,14 @@ pre {
 
 .webhook-link:hover .webhook-item {
     transform: translateY(-1px);
-    box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-} 
+    box-shadow: 0 2px 5px var(--shadow-color-strong);
+}
 .contains-toggle {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: #666;
+    color: var(--text-muted);
     cursor: help;
     white-space: nowrap;
 }
