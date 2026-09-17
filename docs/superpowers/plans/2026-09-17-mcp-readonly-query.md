@@ -1948,7 +1948,14 @@ function stubDb({ explainResult }) {
         skip() { return this; },
         collation() { return this; },
         hint() { return this; },
-        toArray: () => Promise.resolve([{ _id: 'a', event: 'delivered' }]),
+        aggregate() { return this; },
+        // collectBounded (Task 5b) drains cursors via hasNext/next/close rather
+        // than toArray(), so the stub must speak that API.
+        _docs: [{ _id: 'a', event: 'delivered' }],
+        _i: 0,
+        hasNext() { return Promise.resolve(this._i < this._docs.length); },
+        next() { return Promise.resolve(this._docs[this._i++]); },
+        close() { return Promise.resolve(); },
       };
     },
   };
