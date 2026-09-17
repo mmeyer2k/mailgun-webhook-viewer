@@ -1,0 +1,45 @@
+{
+  "explainVersion": "1",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {},
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "stage": "LIMIT",
+      "limitAmount": 20,
+      "inputStage": {
+        "stage": "FETCH",
+        "nss": "probe.webhooks",
+        "inputStage": {
+          "stage": "IXSCAN",
+          "nss": "probe.webhooks",
+          "keyPattern": {
+            "timestamp": -1
+          },
+          "indexName": "timestamp_-1",
+          "isMultiKey": false,
+          "multiKeyPaths": {
+            "timestamp": []
+          },
+          "isUnique": false,
+          "isSparse": false,
+          "isPartial": false,
+          "indexVersion": 2,
+          "direction": "forward",
+          "indexBounds": {
+            "timestamp": [
+              "[MaxKey, MinKey]"
+            ]
+          }
+        }
+      }
+    },
+    "rejectedPlans": []
+  }
+}

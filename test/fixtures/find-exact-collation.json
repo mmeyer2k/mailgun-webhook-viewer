@@ -1,0 +1,74 @@
+{
+  "explainVersion": "1",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {
+      "recipient": {
+        "$eq": "USER5@gmail.com"
+      }
+    },
+    "collation": {
+      "locale": "en",
+      "caseLevel": false,
+      "caseFirst": "off",
+      "strength": 2,
+      "numericOrdering": false,
+      "alternate": "non-ignorable",
+      "maxVariable": "punct",
+      "normalization": false,
+      "backwards": false,
+      "version": "57.1"
+    },
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "stage": "FETCH",
+      "nss": "probe.webhooks",
+      "inputStage": {
+        "stage": "IXSCAN",
+        "nss": "probe.webhooks",
+        "keyPattern": {
+          "recipient": 1,
+          "timestamp": -1
+        },
+        "indexName": "recipient_ci",
+        "collation": {
+          "locale": "en",
+          "caseLevel": false,
+          "caseFirst": "off",
+          "strength": 2,
+          "numericOrdering": false,
+          "alternate": "non-ignorable",
+          "maxVariable": "punct",
+          "normalization": false,
+          "backwards": false,
+          "version": "57.1"
+        },
+        "isMultiKey": false,
+        "multiKeyPaths": {
+          "recipient": [],
+          "timestamp": []
+        },
+        "isUnique": false,
+        "isSparse": false,
+        "isPartial": false,
+        "indexVersion": 2,
+        "direction": "forward",
+        "indexBounds": {
+          "recipient": [
+            "[CollationKey(0x514d314b1c0a7a354129393f082d45410113), CollationKey(0x514d314b1c0a7a354129393f082d45410113)]"
+          ],
+          "timestamp": [
+            "[MaxKey, MinKey]"
+          ]
+        }
+      }
+    },
+    "rejectedPlans": []
+  }
+}

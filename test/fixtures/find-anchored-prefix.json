@@ -1,0 +1,51 @@
+{
+  "explainVersion": "1",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {
+      "recipient": {
+        "$regex": "^user5"
+      }
+    },
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "stage": "FETCH",
+      "nss": "probe.webhooks",
+      "inputStage": {
+        "stage": "IXSCAN",
+        "nss": "probe.webhooks",
+        "keyPattern": {
+          "recipient": 1,
+          "timestamp": -1
+        },
+        "indexName": "recipient_1_timestamp_-1",
+        "isMultiKey": false,
+        "multiKeyPaths": {
+          "recipient": [],
+          "timestamp": []
+        },
+        "isUnique": false,
+        "isSparse": false,
+        "isPartial": false,
+        "indexVersion": 2,
+        "direction": "forward",
+        "indexBounds": {
+          "recipient": [
+            "[\"user5\", \"user6\")",
+            "[/^user5/, /^user5/]"
+          ],
+          "timestamp": [
+            "[MaxKey, MinKey]"
+          ]
+        }
+      }
+    },
+    "rejectedPlans": []
+  }
+}
