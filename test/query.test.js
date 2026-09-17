@@ -52,6 +52,12 @@ test('rejects $function nested inside $unionWith.pipeline', () => {
   ]), /\$function/);
 });
 
+test('rejects $changeStream', () => {
+  // A tailable cursor: hasNext() blocks waiting for the next write, past
+  // maxTimeMS, holding one of the four concurrency slots indefinitely.
+  assert.throws(() => assertReadOnlyPipeline([{ $changeStream: {} }]), /\$changeStream/);
+});
+
 test('rejects a non-array pipeline', () => {
   assert.throws(() => assertReadOnlyPipeline({ $match: {} }), /array/i);
 });

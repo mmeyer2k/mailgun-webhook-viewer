@@ -26,6 +26,9 @@ const allowedRanges = [
  * the peer becomes the proxy and this must be given an explicitly configured
  * number of hops to walk back from the RIGHT of X-Forwarded-For — never a
  * blind first-value read.
+ * Note the failure mode is SILENT and OPEN: behind a proxy the peer becomes
+ * 127.0.0.1, which is on this list, so every route becomes public without any
+ * error.
  *
  * ip-range-check matches IPv6-mapped IPv4 (::ffff:10.0.0.1) against IPv4 CIDRs
  * directly, so no normalization is needed.

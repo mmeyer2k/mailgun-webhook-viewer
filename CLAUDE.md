@@ -92,6 +92,10 @@ The rules that follow from it:
 - **Never add `countDocuments()` on an unbounded filter.** It scans. Use
   `estimatedDocumentCount()` when there is no filter, or cap it with
   `.limit(COUNT_CAP + 1)` and report "N+".
+  The MCP `count` tool deliberately runs the `count` command on caller-supplied
+  filters; it is protected by the plan gate (a scan returns
+  `requiresConfirmation` instead of running) and by `maxTimeMS`, which is why it
+  is the one exception.
 - **Never use `{ $regex: input, $options: 'i' }`.** An unanchored
   case-insensitive regex cannot seek into an index and will examine every key in
   the collection. Use exact match against the `recipient_ci` collation index, or

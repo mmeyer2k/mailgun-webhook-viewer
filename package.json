@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Mailgun webhook storage and management system",
   "main": "server/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",

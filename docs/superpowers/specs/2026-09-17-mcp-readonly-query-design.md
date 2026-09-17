@@ -253,7 +253,7 @@ rather than hand-written approximations.
 
 ### Warn, then confirm
 
-If the plan contains `COLLSCAN` or a blocking `SORT`, the tool **returns
+If the plan is a collection scan or a full index scan, the tool **returns
 without executing**:
 
 ```json
@@ -277,16 +277,26 @@ made, not one that happened.
 When `allowFullScan: true`, the query executes and the `plan` and `warnings`
 are returned alongside the results.
 
+Blocking stages (`SORT`, `GROUP`) are reported in a separate `notes` array and
+never block: every aggregate with `$group` contains one, so gating on them would
+require confirmation for ordinary analytics. A plan with no recognisable stages
+is reported as `scanType: "unknown"` with a loud warning and is allowed to run —
+fail open, but never silently.
+
 ## Read-only enforcement
 
 Enforcement is code-level only, by explicit choice. The MCP layer never invokes
-anything but `find`, `aggregate`, `countDocuments`, and
-`estimatedDocumentCount`.
+anything but `find`, `aggregate`, the `count` command, and
+`estimatedDocumentCount`. (`count` rather than `countDocuments`: the driver
+implements the latter as an aggregate, so the tool would explain one command
+and execute another.)
 
 Pipelines are rejected before execution if any stage is:
 
 - `$out`, `$merge` — write to a collection
 - `$function`, `$where`, `$accumulator` — execute JavaScript server-side
+- `$changeStream` — opens a tailable cursor that outlives `maxTimeMS` and pins
+  a concurrency slot
 
 The check must **recurse into nested pipelines**, since these stages can be
 hidden inside `$facet`, `$lookup.pipeline`, and `$unionWith.pipeline`. A

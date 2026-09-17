@@ -111,3 +111,29 @@ test('gates all methods except the webhook route', async () => {
     server.close();
   }
 });
+
+test('the real app mounts /webhook above the gate and everything else below it', () => {
+  // The hand-built test above asserts the SHAPE; this one asserts the actual
+  // wiring in server/index.js, which is what production runs. Requiring the
+  // module is safe because listen() and mongoose.connect() only run under
+  // require.main === module.
+  const app = require('../server/index');
+  const names = app._router.stack.map((layer) => {
+    if (layer.name === 'ipCheckMiddleware') return 'gate';
+    if (layer.name === 'serveStatic') return 'static';
+    if (layer.regexp && layer.regexp.test('/webhook')) return '/webhook';
+    if (layer.regexp && layer.regexp.test('/api')) return '/api';
+    if (layer.regexp && layer.regexp.test('/mcp')) return '/mcp';
+    return null;
+  }).filter(Boolean);
+  const idx = (n) => names.indexOf(n);
+  for (const n of ['/webhook', 'gate', 'static', '/api', '/mcp']) assert.notStrictEqual(idx(n), -1, `${n} not mounted`);
+  assert.ok(idx('/webhook') < idx('gate'), 'webhook must be ABOVE the gate');
+  // Express's own query/expressInit/jsonParser layers carry a catch-all
+  // regexp that also matches '/webhook', so indexOf('/webhook') is 0 whatever
+  // happens. lastIndexOf is the one that actually moves if the route is
+  // remounted below the gate.
+  assert.ok(names.lastIndexOf('/webhook') < idx('gate'), 'webhook route itself must be ABOVE the gate');
+  assert.ok(idx('gate') < idx('static') && idx('gate') < idx('/api') && idx('gate') < idx('/mcp'), 'gate must precede static, /api and /mcp');
+  assert.strictEqual(names.filter((n) => n === 'gate').length, 1, 'gate registered exactly once');
+});
