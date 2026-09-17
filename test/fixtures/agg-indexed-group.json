@@ -1,0 +1,66 @@
+{
+  "explainVersion": "2",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {
+      "event": {
+        "$eq": "delivered"
+      }
+    },
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "optimizedPipeline": true,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "queryPlan": {
+        "stage": "GROUP",
+        "planNodeId": 3,
+        "inputStage": {
+          "stage": "PROJECTION_COVERED",
+          "planNodeId": 2,
+          "transformBy": {
+            "event": true,
+            "_id": false
+          },
+          "inputStage": {
+            "stage": "IXSCAN",
+            "planNodeId": 1,
+            "nss": "probe.webhooks",
+            "keyPattern": {
+              "event": 1,
+              "timestamp": -1
+            },
+            "indexName": "event_1_timestamp_-1",
+            "isMultiKey": false,
+            "multiKeyPaths": {
+              "event": [],
+              "timestamp": []
+            },
+            "isUnique": false,
+            "isSparse": false,
+            "isPartial": false,
+            "indexVersion": 2,
+            "direction": "forward",
+            "indexBounds": {
+              "event": [
+                "[\"delivered\", \"delivered\"]"
+              ],
+              "timestamp": [
+                "[MaxKey, MinKey]"
+              ]
+            }
+          }
+        }
+      },
+      "slotBasedPlan": {
+        "slots": "$$RESULT=s6 env: {  }",
+        "stages": "[3] project [s6 = newBsonObj(\"_id\", s5, \"n\", s3)] \n[3] group [s5] [s3 = _internalCount::accumulate(s3, 1)] spillSlots[s4] mergingExprs[_internalCount::merge(s4)] \n[3] project [s5 = (s2 ?: null)] \n[1] ixseek seekKeyLow = KS(3C64656C697665726564000F01) seekKeyHigh = KS(3C64656C69766572656400F5FE) [s1 = recordId] [s2 = 0] @\"8bba0c63-05a1-4efe-9afa-0a35ef27c4c7\" @\"event_1_timestamp_-1\" forward "
+      }
+    },
+    "rejectedPlans": []
+  }
+}

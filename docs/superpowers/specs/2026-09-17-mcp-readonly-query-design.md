@@ -200,19 +200,46 @@ options and the execution options must come from one object, not two.
 
 ### Parsing the plan
 
-Plan shape varies by MongoDB version and execution engine: classic plans nest
-under `winningPlan.inputStage`, SBE plans nest under `winningPlan.queryPlan`,
-and aggregate plans may appear under `stages[0].$cursor.queryPlanner` or at the
-top level. Rather than pattern-match each shape, **deep-walk the entire explain
-document** collecting every `stage` and `indexName` value found at any depth.
-One traversal handles every version.
+**Stage names are not sufficient, and assuming otherwise would miss the worst
+query in this codebase.** Measured against MongoDB 8.3 with this repo's index
+set, the unanchored case-insensitive regex — the query `docs/PERFORMANCE.md`
+clocked at 22,384 ms — plans as `IXSCAN`, not `COLLSCAN`. MongoDB *does* use
+the index; it just walks every key in it. A COLLSCAN check waves it straight
+through.
 
-Classify from the collected stages:
+The real signal is the **index bounds on the leading field** of the IXSCAN:
 
-- `COLLSCAN` present → full collection scan.
-- `SORT` present → blocking in-memory sort (hard-fails past 100MB).
-- `IXSCAN` / `IDHACK` / `COUNT_SCAN` / `DISTINCT_SCAN` → index-backed; report
-  every `indexName` seen.
+| Query | Leading bound | Verdict |
+|---|---|---|
+| `{recipient: "user5@gmail.com"}` | `["user5@gmail.com", "user5@gmail.com"]` | point seek |
+| `{recipient: /^user5/}` | `["user5", "user6")` | bounded range |
+| `{timestamp: {$gte, $lte}}` | `[1758070000, 1758067200]` | bounded range |
+| `{recipient: {$regex:"user5", $options:"i"}}` | `["", {})` | **whole index** |
+| `{reason: "bounce"}` sorted by `recipient` | `[MinKey, MaxKey]` | **whole index** |
+
+A leading bound of `[MinKey, MaxKey]`, `[MaxKey, MinKey]`, or `["", {})` means
+every key is read. Only the *leading* field counts — a trailing `[MaxKey,
+MinKey]` on the sort field is normal and appears in healthy plans.
+
+So: deep-walk the explain document (which handles classic nesting, SBE's
+`winningPlan.queryPlan`, and aggregate plans, whose `queryPlanner` sits at the
+top level on 8.x but under `stages[0].$cursor` on older servers), collecting
+every `stage`, `indexName`, and `indexBounds`. Then classify:
+
+- **`COLLSCAN` present** → full collection scan.
+- **`IXSCAN` with an unbounded leading bound** → full index scan.
+- **`SORT` or `GROUP` present** → a blocking stage; it must consume its entire
+  input before emitting a row, so it cannot be rescued by a limit.
+
+A full-range scan is reported as a scan **unless the filter is empty and a
+`LIMIT` is present** — that is the unfiltered list query, which stops after
+`limit` keys and is genuinely cheap. Note that a limit does *not* rescue a
+selective filter over a full-range bound: that is precisely the 22-second
+case, where the scan runs to the end of the index to find its few matches.
+
+Fixtures for all eleven of these plans are captured from a real MongoDB 8.3 in
+`test/fixtures/`, so the classifier is tested against actual server output
+rather than hand-written approximations.
 
 ### Warn, then confirm
 
@@ -223,9 +250,10 @@ without executing**:
 {
   "executed": false,
   "requiresConfirmation": true,
-  "plan": { "stage": "COLLSCAN", "indexUsed": null },
+  "plan": { "scanType": "fullIndexScan", "indexUsed": "recipient_1_timestamp_-1",
+            "leadingBound": "[\"\", {})", "blockingStages": [] },
   "warnings": [
-    "COLLSCAN on webhooks (~100M documents). This query reads every document and will very likely exceed the 15s timeout. An exact recipient match with collation {locale:'en',strength:2} uses the recipient_ci index instead."
+    "Full index scan of recipient_1_timestamp_-1 on webhooks (~100M documents). An unanchored case-insensitive $regex cannot seek, so every key is read; this shape measured 22s in docs/PERFORMANCE.md. Use an exact match with collation {locale:'en',strength:2} (index recipient_ci), or an anchored /^prefix/."
   ],
   "hint": "Re-call with allowFullScan: true to run it anyway."
 }

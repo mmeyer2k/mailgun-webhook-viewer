@@ -1,0 +1,59 @@
+{
+  "explainVersion": "1",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {
+      "event": {
+        "$eq": "delivered"
+      }
+    },
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "optimizedPipeline": true,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "stage": "SORT",
+      "sortPattern": {
+        "message.headers.subject": 1
+      },
+      "memLimit": 104857600,
+      "type": "simple",
+      "inputStage": {
+        "stage": "FETCH",
+        "nss": "probe.webhooks",
+        "inputStage": {
+          "stage": "IXSCAN",
+          "nss": "probe.webhooks",
+          "keyPattern": {
+            "event": 1,
+            "timestamp": -1
+          },
+          "indexName": "event_1_timestamp_-1",
+          "isMultiKey": false,
+          "multiKeyPaths": {
+            "event": [],
+            "timestamp": []
+          },
+          "isUnique": false,
+          "isSparse": false,
+          "isPartial": false,
+          "indexVersion": 2,
+          "direction": "forward",
+          "indexBounds": {
+            "event": [
+              "[\"delivered\", \"delivered\"]"
+            ],
+            "timestamp": [
+              "[MaxKey, MinKey]"
+            ]
+          }
+        }
+      }
+    },
+    "rejectedPlans": []
+  }
+}

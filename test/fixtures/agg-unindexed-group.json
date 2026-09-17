@@ -1,0 +1,41 @@
+{
+  "explainVersion": "2",
+  "queryPlanner": {
+    "namespace": "probe.webhooks",
+    "parsedQuery": {
+      "reason": {
+        "$eq": "x"
+      }
+    },
+    "indexFilterSet": false,
+    "optimizationTimeMillis": 0,
+    "optimizedPipeline": true,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "queryPlan": {
+        "stage": "GROUP",
+        "planNodeId": 2,
+        "inputStage": {
+          "stage": "COLLSCAN",
+          "planNodeId": 1,
+          "filter": {
+            "reason": {
+              "$eq": "x"
+            }
+          },
+          "nss": "probe.webhooks",
+          "direction": "forward"
+        }
+      },
+      "slotBasedPlan": {
+        "slots": "$$RESULT=s7 env: {  }",
+        "stages": "[2] project [s7 = newBsonObj(\"_id\", s6, \"n\", s4)] \n[2] project [s6 = null] \n[2] group [] [s4 = _internalCount::accumulate(s4, 1)] spillSlots[s5] mergingExprs[_internalCount::merge(s5)] \n[1] filter {traverseF(s3, lambda(l2.0) { ((move(l2.0) == \"x\") ?: false) }, false)} \n[1] scan generic [s1 = record, s2 = recordId] [s3 = reason] @\"8bba0c63-05a1-4efe-9afa-0a35ef27c4c7\" "
+      }
+    },
+    "rejectedPlans": []
+  }
+}
