@@ -45,9 +45,24 @@ async function planAndGuard(db, command, { hasFilter, hasLimit, allowFullScan })
     const explained = await db.command({ explain: command, verbosity: 'queryPlanner' });
     plan = analyzePlan(explained, { hasFilter, hasLimit });
   } catch (err) {
-    // An explain failure must not block a legitimate query; report it and let
-    // maxTimeMS bound the execution.
-    return { plan: { scanType: 'unknown', warnings: [], explainError: err.message }, blocked: false };
+    // Fail open: an explain failure must not block a legitimate query. But say
+    // so loudly — an empty warnings array would be indistinguishable from "the
+    // guard ran and this query is fine".
+    return {
+      plan: {
+        scanType: 'unknown',
+        indexUsed: null,
+        leadingBound: null,
+        blockingStages: [],
+        warnings: [
+          `Could not plan this query before running it (${err.message}). The ` +
+          'full-scan guard did NOT run, so this query executed unchecked, ' +
+          'bounded only by maxTimeMS. Treat the result as unverified.',
+        ],
+        explainError: err.message,
+      },
+      blocked: false,
+    };
   }
 
   const blocked = plan.warnings.length > 0 && !allowFullScan;
@@ -130,6 +145,7 @@ function registerTools(server, db) {
       },
     },
     async (args) => {
+      let plan = null;
       try {
         const filter = coerceIds(args.filter || {});
         const limit = Math.min(args.limit || DEFAULTS.limit, DEFAULTS.maxLimit);
@@ -148,12 +164,13 @@ function registerTools(server, db) {
         if (args.collation) command.collation = args.collation;
         if (args.hint) command.hint = args.hint;
 
-        const { plan, blocked } = await planAndGuard(db, command, {
+        const guard = await planAndGuard(db, command, {
           hasFilter: Object.keys(filter).length > 0,
           hasLimit: true,
           allowFullScan: args.allowFullScan,
         });
-        if (blocked) return blockedResult(plan);
+        plan = guard.plan;
+        if (guard.blocked) return blockedResult(plan);
 
         const cursor = db.collection(args.collection)
           .find(filter, { projection })
@@ -176,7 +193,7 @@ function registerTools(server, db) {
           documents: kept,
         });
       } catch (err) {
-        return errorResult(timeoutMessage(err, null));
+        return errorResult(timeoutMessage(err, plan));
       }
     }
   );
@@ -195,6 +212,7 @@ function registerTools(server, db) {
       },
     },
     async (args) => {
+      let plan = null;
       try {
         const filter = coerceIds(args.filter || {});
         const maxTimeMS = clampTime(args.maxTimeMS);
@@ -215,12 +233,13 @@ function registerTools(server, db) {
         if (args.collation) command.collation = args.collation;
         if (args.hint) command.hint = args.hint;
 
-        const { plan, blocked } = await planAndGuard(db, command, {
+        const guard = await planAndGuard(db, command, {
           hasFilter: true,
           hasLimit: false,
           allowFullScan: args.allowFullScan,
         });
-        if (blocked) return blockedResult(plan);
+        plan = guard.plan;
+        if (guard.blocked) return blockedResult(plan);
 
         const options = { maxTimeMS };
         if (args.collation) options.collation = args.collation;
@@ -235,7 +254,7 @@ function registerTools(server, db) {
           count,
         });
       } catch (err) {
-        return errorResult(timeoutMessage(err, null));
+        return errorResult(timeoutMessage(err, plan));
       }
     }
   );
@@ -261,6 +280,7 @@ function registerTools(server, db) {
         return errorResult(err.message);
       }
 
+      let plan = null;
       try {
         const maxTimeMS = clampTime(args.maxTimeMS);
         const firstMatch = args.pipeline.find((s) => s && s.$match);
@@ -271,12 +291,13 @@ function registerTools(server, db) {
         if (args.collation) command.collation = args.collation;
         if (args.hint) command.hint = args.hint;
 
-        const { plan, blocked } = await planAndGuard(db, command, {
+        const guard = await planAndGuard(db, command, {
           hasFilter,
           hasLimit,
           allowFullScan: args.allowFullScan,
         });
-        if (blocked) return blockedResult(plan);
+        plan = guard.plan;
+        if (guard.blocked) return blockedResult(plan);
 
         const options = { maxTimeMS, allowDiskUse: Boolean(args.allowDiskUse) };
         if (args.collation) options.collation = args.collation;
@@ -296,7 +317,7 @@ function registerTools(server, db) {
           documents: kept,
         });
       } catch (err) {
-        return errorResult(timeoutMessage(err, null));
+        return errorResult(timeoutMessage(err, plan));
       }
     }
   );
