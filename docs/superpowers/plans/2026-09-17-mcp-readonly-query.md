@@ -1489,6 +1489,17 @@ test('rejects $unionWith targeting a collection outside the allowlist', () => {
   ]), /\$unionWith.*system\.users/);
 });
 
+test('rejects the $unionWith string shorthand outside the allowlist', () => {
+  // { $unionWith: "name" } is MongoDB shorthand for { $unionWith: { coll: "name" } }.
+  // A guard that only inspects object specs waves this straight through.
+  assert.throws(() => assertReadOnlyPipeline([{ $limit: 1 }, { $unionWith: 'secrets' }]),
+    /\$unionWith.*secrets/);
+});
+
+test('allows the $unionWith string shorthand for a permitted collection', () => {
+  assert.doesNotThrow(() => assertReadOnlyPipeline([{ $limit: 1 }, { $unionWith: 'messages' }]));
+});
+
 test('rejects $lookup from a collection outside the allowlist', () => {
   assert.throws(() => assertReadOnlyPipeline([
     { $lookup: { from: 'secrets', localField: 'a', foreignField: 'b', as: 'x' } },
@@ -1624,10 +1635,19 @@ const FORBIDDEN = [...WRITE_STAGES, ...JS_OPERATORS];
 const LOOKUP_STAGES = ['$lookup', '$graphLookup', '$unionWith'];
 
 function assertLookupTarget(stage, spec) {
-  if (!spec || typeof spec !== 'object') return;
-  // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is the
-  // $documents form, which reads no collection and is fine.
-  const target = spec.from !== undefined ? spec.from : spec.coll;
+  // $unionWith accepts a bare string as shorthand for { coll: "<name>" };
+  // $lookup and $graphLookup are object-only. Normalise to the target name
+  // first, then hold every form to the same list.
+  let target;
+  if (typeof spec === 'string') {
+    target = spec;
+  } else if (spec && typeof spec === 'object' && !Array.isArray(spec)) {
+    // $lookup uses `from`; $unionWith uses `coll`. A $lookup with neither is
+    // the $documents form, which reads no collection and is fine.
+    target = spec.from !== undefined ? spec.from : spec.coll;
+  } else {
+    return;
+  }
   if (target === undefined) return;
   if (typeof target !== 'string' || !COLLECTIONS.includes(target)) {
     throw new Error(
@@ -1753,7 +1773,7 @@ module.exports = {
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `npm test`
-Expected: all query tests pass (the original 14 non-truncation tests plus 16 new ones = 30), plus 7 ipCheck + 16 explain.
+Expected: all query tests pass (the original 14 non-truncation tests plus 18 new ones = 32), plus 7 ipCheck + 16 explain.
 
 - [ ] **Step 5: Wire the guard, the bounded collector, the skip cap and the concurrency cap into `server/mcp/tools.js`**
 
@@ -1849,7 +1869,7 @@ Run: `node -e "console.log(typeof require('./server/mcp/tools').registerTools)"`
 Expected: `function`
 
 Run: `npm test`
-Expected: PASS, 53 tests (7 + 16 + 30).
+Expected: PASS, 55 tests (7 + 16 + 32).
 
 - [ ] **Step 7: Commit**
 
