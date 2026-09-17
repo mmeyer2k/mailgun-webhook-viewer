@@ -192,7 +192,7 @@ function fakeCursor(docs) {
 test('collectBounded returns everything when under both caps and closes the cursor', async () => {
   const c = fakeCursor([{ a: 1 }, { a: 2 }]);
   const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 1000 });
-  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.docs.length, 2);
   assert.strictEqual(r.truncated, false);
   assert.deepStrictEqual(r.docs, [{ a: 1 }, { a: 2 }]);
   assert.strictEqual(c.closed, true);
@@ -203,29 +203,28 @@ test('collectBounded stops at the byte cap without reading further', async () =>
   const c = fakeCursor(docs);
   const r = await collectBounded(c, { maxBytes: 5000, maxDocs: 1000 });
   assert.strictEqual(r.truncated, true);
-  assert.ok(r.returned > 0 && r.returned < 500);
-  assert.strictEqual(r.docs.length, r.returned);
+  assert.ok(r.docs.length > 0 && r.docs.length < 500);
   assert.strictEqual(c.closed, true);
 });
 
 test('collectBounded stops at the document cap and reports truncation when more remain', async () => {
   const c = fakeCursor([{ a: 1 }, { a: 2 }, { a: 3 }]);
   const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
-  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.docs.length, 2);
   assert.strictEqual(r.truncated, true);
 });
 
 test('collectBounded does not report truncation when the cap equals the result size', async () => {
   const c = fakeCursor([{ a: 1 }, { a: 2 }]);
   const r = await collectBounded(c, { maxBytes: 100000, maxDocs: 2 });
-  assert.strictEqual(r.returned, 2);
+  assert.strictEqual(r.docs.length, 2);
   assert.strictEqual(r.truncated, false);
 });
 
 test('collectBounded reports truncation when the first document exceeds the cap', async () => {
   const c = fakeCursor([{ pad: 'x'.repeat(10000) }]);
   const r = await collectBounded(c, { maxBytes: 100, maxDocs: 1000 });
-  assert.strictEqual(r.returned, 0);
+  assert.strictEqual(r.docs.length, 0);
   assert.strictEqual(r.truncated, true);
   assert.strictEqual(c.closed, true);
 });

@@ -2,6 +2,14 @@ const mongoose = require('mongoose');
 
 const COLLECTIONS = ['webhooks', 'messages'];
 
+// Fields a `find` leaves out unless the caller names them in a projection.
+// `messages` bodies are large enough to exhaust an agent's context on their
+// own. Keyed by collection so the next large field is one line here rather
+// than a new branch in the tool.
+const DEFAULT_EXCLUDED_FIELDS = {
+  messages: ['body-html', 'body-plain'],
+};
+
 const DEFAULTS = {
   limit: 50,
   maxLimit: 1000,
@@ -152,12 +160,14 @@ async function collectBounded(cursor, { maxBytes = DEFAULTS.maxBytes, maxDocs = 
     await Promise.resolve(cursor.close()).catch(() => {});
   }
 
-  return { docs, returned: docs.length, truncated };
+  return { docs, truncated };
 }
 
 module.exports = {
   COLLECTIONS,
   DEFAULTS,
+  DEFAULT_EXCLUDED_FIELDS,
+  FORBIDDEN,
   assertNoForbiddenOperators,
   assertReadOnlyPipeline,
   coerceIds,
