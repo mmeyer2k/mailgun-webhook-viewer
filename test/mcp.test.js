@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const express = require('express');
 const http = require('node:http');
 const mcpRouter = require('../server/mcp');
+const { withListening } = require('./helpers');
 
 // A stub Db standing in for mongoose.connection.db. Records what it was asked
 // to do so the test can assert the guard fired without needing a live MongoDB.
@@ -27,7 +28,6 @@ function stubDb({ explainResult }) {
       return {
         indexes: () => Promise.resolve([{ name: '_id_', key: { _id: 1 } }]),
         estimatedDocumentCount: () => Promise.resolve(12345),
-        countDocuments: () => Promise.resolve(7),
         find() { return this; },
         aggregate() { return this; },
         limit() { return this; },
@@ -36,7 +36,6 @@ function stubDb({ explainResult }) {
         skip() { return this; },
         collation() { return this; },
         hint() { return this; },
-        toArray: () => Promise.resolve([{ _id: 'a', event: 'delivered' }]),
         hasNext: async () => !served,
         next: async () => { served = true; return { _id: 'a', event: 'delivered' }; },
         close: async () => {},
@@ -78,18 +77,13 @@ const IXSCAN_EXPLAIN = {
 };
 
 function withApp(db, fn) {
-  return new Promise((resolve) => {
-    const app = express();
-    app.use(express.json());
-    const server = app.listen(0, '127.0.0.1', async () => {
-      const port = server.address().port;
-      // Mounted after listen so the allowlist can name the real port. Express
-      // accepts routes added at any time.
-      app.use('/mcp', mcpRouter(() => db, { allowedHosts: [`127.0.0.1:${port}`] }));
-      const url = `http://127.0.0.1:${port}/mcp`;
-      const out = await fn(url);
-      server.close(() => resolve(out));
-    });
+  const app = express();
+  app.use(express.json());
+  return withListening(app, (base, port) => {
+    // Mounted after listen so the allowlist can name the real port. Express
+    // accepts routes added at any time.
+    app.use('/mcp', mcpRouter(() => db, { allowedHosts: [`127.0.0.1:${port}`] }));
+    return fn(`${base}/mcp`);
   });
 }
 

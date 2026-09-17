@@ -2,21 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
 const ipCheck = require('../server/middleware/ipCheck');
+const { withListening, fakeRes } = require('./helpers');
 
 // Starts a server bound to 127.0.0.1 and issues a request with the given
 // headers. The peer is therefore always 127.0.0.1 (or ::1), which is allowed —
 // so any 403 here proves the header was what got rejected, and any 200 on a
 // forged header proves the header was trusted.
 function withServer(handler) {
-  return new Promise((resolve) => {
-    const app = express();
-    app.use(ipCheck);
-    app.use((req, res) => res.json({ ok: true }));
-    const server = app.listen(0, '127.0.0.1', async () => {
-      const result = await handler(`http://127.0.0.1:${server.address().port}/api/x`);
-      server.close(() => resolve(result));
-    });
-  });
+  const app = express();
+  app.use(ipCheck);
+  app.use((req, res) => res.json({ ok: true }));
+  return withListening(app, (base) => handler(`${base}/api/x`));
 }
 
 test('allows a request with no forwarding header from a local peer', async () => {
@@ -35,26 +31,22 @@ test('ignores X-Forwarded-For entirely', async () => {
 test('rejects a peer outside the allowed ranges', () => {
   // Unit-level: drive the middleware directly with a forged header and a
   // public peer. This is the regression test for the forgeable gate.
-  let statusCode = null;
   const req = {
     headers: { 'x-forwarded-for': '10.0.0.1' },
     socket: { remoteAddress: '203.0.113.7' },
   };
-  const res = {
-    status(c) { statusCode = c; return this; },
-    json() { return this; },
-  };
+  const res = fakeRes();
   let nextCalled = false;
   ipCheck(req, res, () => { nextCalled = true; });
 
   assert.strictEqual(nextCalled, false, 'forged X-Forwarded-For must not pass');
-  assert.strictEqual(statusCode, 403);
+  assert.strictEqual(res.statusCode, 403);
 });
 
 test('allows an IPv6-mapped IPv4 private peer', () => {
   let nextCalled = false;
   ipCheck({ headers: {}, socket: { remoteAddress: '::ffff:10.0.0.1' } },
-          { status() { return this; }, json() { return this; } },
+          fakeRes(),
           () => { nextCalled = true; });
   assert.strictEqual(nextCalled, true);
 });
@@ -64,7 +56,7 @@ test('allows the IPv6 loopback peer', () => {
   // 127.0.0.1/32. Without ::1/128 in the allowlist, local dev breaks.
   let nextCalled = false;
   ipCheck({ headers: {}, socket: { remoteAddress: '::1' } },
-          { status() { return this; }, json() { return this; } },
+          fakeRes(),
           () => { nextCalled = true; });
   assert.strictEqual(nextCalled, true);
 });
@@ -72,7 +64,7 @@ test('allows the IPv6 loopback peer', () => {
 test('allows a Tailscale CGNAT peer', () => {
   let nextCalled = false;
   ipCheck({ headers: {}, socket: { remoteAddress: '100.101.102.103' } },
-          { status() { return this; }, json() { return this; } },
+          fakeRes(),
           () => { nextCalled = true; });
   assert.strictEqual(nextCalled, true);
 });
@@ -92,24 +84,18 @@ test('gates all methods except the webhook route', async () => {
   app.post('/mcp', (req, res) => res.json({ mcp: true }));
   app.get('/api/webhooks', (req, res) => res.json({ api: true }));
 
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  await withListening(app, async (base) => {
+    const post = async (path) =>
+      (await fetch(base + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })).status;
 
-  const post = async (path) =>
-    (await fetch(base + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    })).status;
-
-  try {
     assert.strictEqual(await post('/webhook'), 200, 'webhook must stay public');
     assert.strictEqual(await post('/mcp'), 403, 'MCP must be gated');
     assert.strictEqual((await fetch(`${base}/api/webhooks`)).status, 403, 'API must be gated');
-  } finally {
-    server.close();
-  }
+  });
 });
 
 test('the real app mounts /webhook above the gate and everything else below it', () => {

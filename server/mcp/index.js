@@ -52,6 +52,10 @@ function mcpRouter(getDb, { allowedHosts }) {
 
   const router = express.Router();
 
+  // Done here rather than through the transport's `allowedOrigins`: that option
+  // is a value allowlist which no-ops when the list is empty, so it can say
+  // "only these origins" but not "no Origin at all". Moving this check into
+  // `allowedOrigins: []` would silently disable it.
   router.use((req, res, next) => {
     if (req.headers.origin !== undefined) {
       return rpcError(res, 403, 'Requests with an Origin header are not accepted on this endpoint.');

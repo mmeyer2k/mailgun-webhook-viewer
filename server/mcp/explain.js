@@ -107,16 +107,6 @@ function leadingBounds(scan) {
   return Array.isArray(entries) ? entries : [];
 }
 
-/**
- * The single bound worth reporting for a scan: the offending one if there is
- * one, otherwise the first. `leadingBound` in the output names the interval
- * that caused the verdict, which is what the agent needs to fix its query.
- */
-function leadingBoundOf(scan) {
-  const entries = leadingBounds(scan);
-  return entries.find(isUnboundedBound) || entries[0] || null;
-}
-
 function analyzePlan(explainDoc, { hasFilter, hasLimit } = {}) {
   const stages = collectStages(explainDoc);
 
@@ -145,13 +135,17 @@ function analyzePlan(explainDoc, { hasFilter, hasLimit } = {}) {
   const collScan = stages.find((s) => s.stage === 'COLLSCAN');
 
   // Classify every seek stage, and prefer an offending one when reporting:
-  // indexUsed and leadingBound must name the branch that caused the verdict.
-  const seekStages = stages.filter((s) => SEEK_STAGES.has(s.stage));
-  const unboundedSeek = seekStages.find((s) => leadingBounds(s).some(isUnboundedBound));
-  const seekStage = unboundedSeek || seekStages[0] || null;
+  // indexUsed and leadingBound must name the branch that caused the verdict,
+  // and the interval within it — that is what the agent needs to fix its
+  // query. Bounds are computed once per stage and reused for the report.
+  const seeks = stages
+    .filter((s) => SEEK_STAGES.has(s.stage))
+    .map((s) => ({ stage: s, bounds: leadingBounds(s) }));
+  const unboundedSeek = seeks.find((s) => s.bounds.some(isUnboundedBound));
+  const seek = unboundedSeek || seeks[0] || null;
 
-  const indexUsed = seekStage ? seekStage.indexName || null : null;
-  const leadingBound = seekStage ? leadingBoundOf(seekStage) : null;
+  const indexUsed = seek ? seek.stage.indexName || null : null;
+  const leadingBound = seek ? seek.bounds.find(isUnboundedBound) || seek.bounds[0] || null : null;
 
   let scanType = 'indexSeek';
   if (collScan) {
