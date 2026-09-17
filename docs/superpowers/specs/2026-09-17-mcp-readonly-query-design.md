@@ -224,7 +224,17 @@ MinKey]` on the sort field is normal and appears in healthy plans.
 So: deep-walk the explain document (which handles classic nesting, SBE's
 `winningPlan.queryPlan`, and aggregate plans, whose `queryPlanner` sits at the
 top level on 8.x but under `stages[0].$cursor` on older servers), collecting
-every `stage`, `indexName`, and `indexBounds`. Then classify:
+every `stage`, `indexName`, and `indexBounds`.
+
+**The walk must skip `rejectedPlans` and `allPlansExecution`.** Those hold
+complete stage trees for candidate plans the planner *discarded*. Walking them
+lets a rejected `COLLSCAN` condemn the fast winning `IXSCAN` beside it — which
+would block the exact-recipient lookup this gate exists to let through. Every
+fixture captured here has `rejectedPlans: []` because the probe collection had
+few candidate indexes; in production, a recipient query has several, so this
+branch is routinely populated.
+
+Then classify:
 
 - **`COLLSCAN` present** → full collection scan.
 - **`IXSCAN` with an unbounded leading bound** → full index scan.
