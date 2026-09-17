@@ -20,6 +20,7 @@ These were settled during design; they are inputs, not open questions.
 | Query freedom | Open `find` / `aggregate` / `count` passthrough — not a fixed tool set |
 | Full scans | Warn, then require explicit confirmation before executing |
 | Read-only enforcement | Code-level only; no separate read-only Mongo user |
+| IP gate | Peer address, all methods, shared middleware fixed in this change |
 | Agent documentation | MCP `instructions` + tool descriptions; **no `AGENTS.md` file** |
 | Tests | `node --test`, no new test dependency |
 
@@ -77,20 +78,55 @@ The listening port is necessarily reachable from the public internet, because
 that is how Mailgun delivers webhooks. Anyone who can reach it can therefore
 send that header and pass the gate.
 
-**The MCP router gates on the real TCP peer** — `req.socket.remoteAddress` —
-and ignores `X-Forwarded-For` entirely. Over Tailscale the peer address *is*
-the `100.64.0.0/10` address, so the gate works exactly as intended and cannot
-be forged: an attacker has to actually be on the tailnet. This ships as a new
-`strictIpCheck` middleware rather than a change to the shared one, so the MCP
-endpoint's guarantee does not depend on the deployment topology of the web UI.
+**The fix, applied to the shared middleware.** Production is confirmed to have
+no reverse proxy — Mailgun and Tailscale clients both reach the Node process
+directly — so `ipCheck` gates on `req.socket.remoteAddress` and ignores
+`X-Forwarded-For` entirely. Over Tailscale the peer address *is* the
+`100.64.0.0/10` address, so the gate behaves exactly as intended and forging it
+requires actually being on the tailnet.
 
-If a reverse proxy is ever placed in front of `/mcp`, the peer becomes the
-proxy and the gate must then be given an explicit, configured trusted-proxy
-hop count — never an unconditional header read.
+No `TRUST_PROXY_HOPS` configuration knob ships with this. There is no proxy to
+configure it for, and this codebase has already paid for maintaining machinery
+against a use case that did not exist (see the four dead indexes in
+`docs/PERFORMANCE.md`). A comment records what to do if a proxy is ever added:
+walk back a configured number of hops from the *right* of `X-Forwarded-For`,
+never a blind first-value read.
 
-> **Note, outside this change's scope:** defect 2 applies today to the web UI
-> and `/api` through the shared middleware. The MCP work does not introduce it
-> and does not fix it. Tracked separately.
+Two details that would otherwise break it silently:
+
+- `ip-range-check` accepts IPv6-mapped IPv4 (`::ffff:10.0.0.1`) against an IPv4
+  CIDR directly — verified — so no normalization is needed.
+- It does **not** match `::1` against `127.0.0.1/32`. A dual-stack connection to
+  `localhost` arrives as `::1`, so `::1/128` must be added to the allowlist or
+  local development breaks the moment the header fallback is removed.
+
+### Middleware ordering
+
+Registration must change, not just the check itself. The gate is currently
+`app.get('/*', ...)`, which covers only GET; that is why `POST /webhook` is
+public today. Switching to `app.use` without reordering would gate the webhook
+endpoint and **break Mailgun ingestion**.
+
+The correct order in `server/index.js`:
+
+```js
+app.use(cors());
+app.use(express.json());
+
+app.use('/webhook', webhookRoutes);   // public by design; signature-verified
+
+app.use(ipCheckMiddleware);           // gates everything below, ALL methods
+
+app.use(express.static(...));
+app.use('/api', apiRoutes);
+app.use('/mcp', mcpRoutes);
+```
+
+This makes the MCP router's own gate unnecessary — one correctly placed check
+beats two. It also upgrades the invariant in `CLAUDE.md`: today "any new write
+route is not covered", afterwards *every* route except `POST /webhook` is
+covered regardless of method. `CLAUDE.md` must be updated to say so, since the
+old wording would actively mislead.
 
 ### New dependencies
 
@@ -273,19 +309,19 @@ count("webhooks", {
 
 ```
 server/mcp/index.js         router, transport wiring
-server/mcp/strictIpCheck.js peer-address IP gate (ignores X-Forwarded-For)
 server/mcp/tools.js         tool definitions and handlers
 server/mcp/query.js         sanitization, _id coercion, execution, truncation
 server/mcp/explain.js       explain command + plan analysis
 server/mcp/instructions.js  the instructions string
 test/explain.test.js
 test/query.test.js
-test/strictIpCheck.test.js
+test/ipCheck.test.js
 ```
 
-Modified: `server/index.js` (mount the router), `package.json` (deps,
+Modified: `server/index.js` (middleware ordering + mount the router),
+`server/middleware/ipCheck.js` (peer address, `::1`), `package.json` (deps,
 `"test": "node --test"`), `Dockerfile` (node:22), `README.md` (client setup),
-`CLAUDE.md` (document the new surface and that it is IP-gated).
+`CLAUDE.md` (the new surface, and the corrected access-control invariant).
 
 ## Testing
 
@@ -305,9 +341,13 @@ rather than loud:
   left alone; `{$in: [...]}` is handled element-wise.
 - **Truncation**: under the cap returns everything with `truncated: false`;
   over the cap stops at the boundary and reports `truncated: true`.
-- **`strictIpCheck`**: a forged `X-Forwarded-For` naming a private or CGNAT
-  address is rejected when the peer is public; a genuine `100.64.0.0/10` peer
-  is allowed. This is the regression test for the defect above.
+- **`ipCheck`**: a forged `X-Forwarded-For` naming a private or CGNAT address
+  is rejected when the peer is public; a genuine `100.64.0.0/10` peer is
+  allowed; `::ffff:`-mapped and `::1` peers are allowed. This is the regression
+  test for the defect above.
+- **Ordering**: `POST /webhook` reaches its handler from a public peer, while
+  `POST /mcp` and `GET /api/...` from the same peer are refused. This is the
+  test that catches a reordering that silently breaks Mailgun ingestion.
 
 Integration against a live MongoDB is out of scope for the automated suite; it
 requires `docker compose up` and is verified manually.
@@ -316,4 +356,8 @@ requires `docker compose up` and is verified manually.
 
 - A separate read-only MongoDB user (considered, explicitly declined).
 - stdio transport.
-- Any change to the existing `/api` routes or the web UI.
+- Any change to the query logic in `/api` or to the web UI's behaviour. Note
+  that the web UI and `/api` *are* affected by the `ipCheck` fix above — they
+  gain the corrected gate — but no route handler or page changes.
+- The stored-XSS issue in `public/js/events.js` / `event.js` noted in
+  `CLAUDE.md`. Untouched by this work.
