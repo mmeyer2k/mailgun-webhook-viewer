@@ -16,9 +16,16 @@
  *
  * Only the leading field counts. A trailing [MaxKey, MinKey] on the sort field
  * appears in perfectly healthy plans.
+ *
+ * EVERY seek stage in the plan is classified, not just the first one. An $or
+ * plans as one IXSCAN per branch, and a $lookup sub-pipeline contributes its
+ * own $cursor stage; a plan whose first branch seeks a single recipient and
+ * whose second reads every key in the index is a full index scan, and reading
+ * only the first stage reports it as clean. Likewise a single leading field
+ * can carry several intervals, so all of them are checked.
  */
 
-// Bound strings meaning "every key". leadingBoundOf() normalises COUNT_SCAN's
+// Bound strings meaning "every key". leadingBounds() normalises COUNT_SCAN's
 // {startKey, endKey} shape into this same rendering.
 const UNBOUNDED = new Set(['[MinKey, MaxKey]', '[MaxKey, MinKey]', '["", {})']);
 
@@ -68,39 +75,80 @@ function bsonLabel(v) {
 }
 
 /**
- * The bound on the scan's LEADING index field.
+ * EVERY bound on the scan's LEADING index field, as an array of strings.
  *
  * Two shapes exist, verified against real explain output:
  *   IXSCAN     {recipient: ['["a", "a"]'], timestamp: ['[MaxKey, MinKey]']}
  *   COUNT_SCAN {startKey: {event: 'delivered', ...}, endKey: {...}, ...}
  * Treating the second like the first reads "startKey" as a field name and
- * silently classifies every covered count as a seek.
+ * silently classifies every covered count as a seek, so it is normalised into
+ * a one-element array holding the same [lo, hi] rendering.
+ *
+ * The leading field is an ARRAY because one field can be scanned over several
+ * intervals — {recipient: {$in: [...]}} or an $or folded into one scan. If any
+ * one of them is unbounded the whole scan walks the index, so the caller has
+ * to see all of them, not just the first.
  */
-function leadingBoundOf(scan) {
+function leadingBounds(scan) {
   const bounds = scan.indexBounds;
-  if (!bounds || typeof bounds !== 'object') return null;
+  if (!bounds || typeof bounds !== 'object') return [];
 
   if (bounds.startKey && typeof bounds.startKey === 'object') {
     const field = Object.keys(bounds.startKey)[0];
-    if (!field) return null;
+    if (!field) return [];
     const lo = bsonLabel(bounds.startKey[field]);
     const hi = bsonLabel(bounds.endKey ? bounds.endKey[field] : undefined);
-    return `[${lo}, ${hi}]`;
+    return [`[${lo}, ${hi}]`];
   }
 
   const first = Object.keys(bounds)[0];
-  if (!first) return null;
+  if (!first) return [];
   const entries = bounds[first];
-  return Array.isArray(entries) ? entries[0] : null;
+  return Array.isArray(entries) ? entries : [];
+}
+
+/**
+ * The single bound worth reporting for a scan: the offending one if there is
+ * one, otherwise the first. `leadingBound` in the output names the interval
+ * that caused the verdict, which is what the agent needs to fix its query.
+ */
+function leadingBoundOf(scan) {
+  const entries = leadingBounds(scan);
+  return entries.find(isUnboundedBound) || entries[0] || null;
 }
 
 function analyzePlan(explainDoc, { hasFilter, hasLimit } = {}) {
   const stages = collectStages(explainDoc);
+
+  // No stage node anywhere means the walk did not understand this explain
+  // shape — a future server version, or an error document. Returning
+  // 'indexSeek' with no warnings would be indistinguishable from "the guard
+  // ran and this query is fine". Fail open, but say so.
+  if (stages.length === 0) {
+    return {
+      scanType: 'unknown',
+      indexUsed: null,
+      leadingBound: null,
+      blockingStages: [],
+      notes: [],
+      warnings: [
+        'Could not recognise any plan stage in the explain output. The ' +
+        'full-scan guard did NOT evaluate this query; it will run unchecked, ' +
+        'bounded only by maxTimeMS. Treat the result as unverified.',
+      ],
+    };
+  }
+
   const names = stages.map((s) => s.stage);
 
   const blockingStages = [...new Set(names.filter((n) => BLOCKING_STAGES.has(n)))];
   const collScan = stages.find((s) => s.stage === 'COLLSCAN');
-  const seekStage = stages.find((s) => SEEK_STAGES.has(s.stage));
+
+  // Classify every seek stage, and prefer an offending one when reporting:
+  // indexUsed and leadingBound must name the branch that caused the verdict.
+  const seekStages = stages.filter((s) => SEEK_STAGES.has(s.stage));
+  const unboundedSeek = seekStages.find((s) => leadingBounds(s).some(isUnboundedBound));
+  const seekStage = unboundedSeek || seekStages[0] || null;
 
   const indexUsed = seekStage ? seekStage.indexName || null : null;
   const leadingBound = seekStage ? leadingBoundOf(seekStage) : null;
@@ -108,11 +156,12 @@ function analyzePlan(explainDoc, { hasFilter, hasLimit } = {}) {
   let scanType = 'indexSeek';
   if (collScan) {
     scanType = 'collectionScan';
-  } else if (leadingBound && isUnboundedBound(leadingBound)) {
+  } else if (unboundedSeek) {
     scanType = 'fullIndexScan';
   }
 
   const warnings = [];
+  const notes = [];
 
   // An unbounded scan with no filter and a limit is the unfiltered list query:
   // it stops after `limit` keys and is genuinely cheap. A limit does NOT rescue
@@ -138,15 +187,18 @@ function analyzePlan(explainDoc, { hasFilter, hasLimit } = {}) {
     );
   }
 
-  if (blockingStages.length > 0 && warnings.length > 0) {
-    warnings.push(
-      `The plan also contains blocking stage(s) ${blockingStages.join(', ')}, ` +
-      'which must consume the entire input before producing a row, so a limit ' +
-      'will not bound this.'
+  // Informational, never blocking: EVERY aggregate with $group has a blocking
+  // GROUP stage, so gating on one would demand confirmation for ordinary
+  // analytics. warnings is reserved for scans and the unrecognised plan.
+  if (blockingStages.length > 0) {
+    notes.push(
+      `Plan contains blocking stage(s) ${blockingStages.join(', ')}: they ` +
+      'consume their whole input before emitting a row, so a limit does not ' +
+      "bound them. Bounded by maxTimeMS and MongoDB's 100MB in-memory limit."
     );
   }
 
-  return { scanType, indexUsed, leadingBound, blockingStages, warnings };
+  return { scanType, indexUsed, leadingBound, blockingStages, notes, warnings };
 }
 
 module.exports = { analyzePlan, isUnboundedBound, collectStages };

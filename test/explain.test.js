@@ -47,9 +47,9 @@ test('an unanchored case-insensitive regex is a FULL INDEX SCAN despite IXSCAN',
   assert.match(r.warnings[0], /full index scan/i);
 });
 
-test('a filter on an unindexed field is a full index scan', () => {
+test('a filter on an unindexed field is a collection scan', () => {
   const r = analyzePlan(fixture('find-unindexed-field'), { hasFilter: true, hasLimit: true });
-  assert.notStrictEqual(r.scanType, 'indexSeek');
+  assert.strictEqual(r.scanType, 'collectionScan');
   assert.ok(r.warnings.length > 0);
 });
 
@@ -58,6 +58,9 @@ test('the unfiltered sorted list query is NOT flagged', () => {
   // after `limit` keys. This is the normal list page; flagging it would make
   // the gate cry wolf.
   const r = analyzePlan(fixture('find-unfiltered-sorted'), { hasFilter: false, hasLimit: true });
+  // Unbounded-but-rescued: the classification still says fullIndexScan, it is
+  // the warning that is withheld.
+  assert.strictEqual(r.scanType, 'fullIndexScan');
   assert.deepStrictEqual(r.warnings, []);
 });
 
@@ -117,9 +120,12 @@ test('an aggregate with a blocking sort reports it', () => {
 });
 
 test('handles an explain document with no recognisable plan', () => {
+  // Fail OPEN but loudly: an unrecognised plan must never be reported as a
+  // clean seek, because the guard did not actually evaluate anything.
   const r = analyzePlan({}, { hasFilter: true, hasLimit: false });
-  assert.strictEqual(r.scanType, 'indexSeek');
-  assert.deepStrictEqual(r.warnings, []);
+  assert.strictEqual(r.scanType, 'unknown');
+  assert.strictEqual(r.warnings.length, 1);
+  assert.match(r.warnings[0], /did NOT evaluate/);
 });
 
 test('ignores rejectedPlans when classifying', () => {
@@ -146,5 +152,69 @@ test('ignores rejectedPlans when classifying', () => {
 
   assert.strictEqual(r.scanType, 'indexSeek');
   assert.strictEqual(r.indexUsed, 'recipient_ci');
+  assert.deepStrictEqual(r.warnings, []);
+});
+
+test('an $or plan with one bounded and one unbounded branch is a full index scan', () => {
+  // The Critical case. Branch one seeks a single recipient; branch two reads
+  // every key in a 100M-row index. Inspecting only the FIRST seek stage
+  // reports a clean indexSeek with no warnings — a false all-clear on the
+  // worst input this gate exists to catch.
+  const r = analyzePlan({
+    queryPlanner: {
+      winningPlan: {
+        stage: 'FETCH',
+        inputStage: {
+          stage: 'OR',
+          inputStages: [
+            {
+              stage: 'IXSCAN',
+              indexName: 'recipient_1_timestamp_-1',
+              indexBounds: {
+                recipient: ['["a@b.com", "a@b.com"]'],
+                timestamp: ['[MaxKey, MinKey]'],
+              },
+            },
+            {
+              stage: 'IXSCAN',
+              indexName: 'recipient_1_timestamp_-1',
+              indexBounds: {
+                recipient: ['["", {})', '[/y/i, /y/i]'],
+                timestamp: ['[MaxKey, MinKey]'],
+              },
+            },
+          ],
+        },
+      },
+    },
+  }, { hasFilter: true, hasLimit: true });
+
+  assert.strictEqual(r.scanType, 'fullIndexScan');
+  assert.strictEqual(r.leadingBound, '["", {})');
+  assert.ok(r.warnings.length > 0);
+});
+
+test('an unbounded interval that is not the first entry is still detected', () => {
+  // A leading field can carry several intervals. Reading only entries[0] sees
+  // the tight one and misses the one that walks the whole index.
+  const r = analyzePlan({
+    queryPlanner: {
+      winningPlan: {
+        stage: 'IXSCAN',
+        indexName: 'recipient_1_timestamp_-1',
+        indexBounds: { recipient: ['["a", "b")', '[MinKey, MaxKey]'] },
+      },
+    },
+  }, { hasFilter: true, hasLimit: true });
+
+  assert.strictEqual(r.scanType, 'fullIndexScan');
+});
+
+test('blocking stages are reported as notes, not warnings', () => {
+  // Every aggregate with $group has a blocking GROUP stage. Gating on that
+  // would demand confirmation for ordinary analytics, so it is informational.
+  const r = analyzePlan(fixture('agg-indexed-group'), { hasFilter: true, hasLimit: false });
+  assert.ok(r.blockingStages.includes('GROUP'));
+  assert.strictEqual(r.notes.length, 1);
   assert.deepStrictEqual(r.warnings, []);
 });
