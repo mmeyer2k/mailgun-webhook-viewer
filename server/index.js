@@ -1,17 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
 const path = require('path');
 const ipCheckMiddleware = require('./middleware/ipCheck');
 
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
+const mcpRouter = require('./mcp');
 
 const app = express();
 
 // Middleware
-app.use(cors());
 app.use(express.json());
 
 // Mailgun posts here from the public internet, so this route is deliberately
@@ -26,6 +25,17 @@ app.use(ipCheckMiddleware);
 
 app.use(express.static(path.join(__dirname, '../public')));
 app.use('/api', apiRoutes);
+
+const PORT = process.env.PORT || 3000;
+
+// Read-only MCP endpoint for AI agents. Below the IP gate, so it is reachable
+// only from the private/Tailscale ranges. The Host allowlist must name every
+// host:port a client will use; only the localhost forms are built in.
+const mcpAllowedHosts = mcpRouter.defaultAllowedHosts(PORT);
+if (!process.env.MCP_ALLOWED_HOSTS) {
+  console.warn('MCP_ALLOWED_HOSTS is not set: /mcp will accept only localhost Host headers.');
+}
+app.use('/mcp', mcpRouter(() => mongoose.connection.db, { allowedHosts: mcpAllowedHosts }));
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
@@ -42,7 +52,6 @@ mongoose.connect(process.env.MONGODB_URI, {
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 }); 
