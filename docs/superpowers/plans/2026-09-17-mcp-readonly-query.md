@@ -628,7 +628,7 @@ module.exports = { analyzePlan, isUnboundedBound, collectStages };
 - [ ] **Step 5: Run the test and verify it passes**
 
 Run: `npm test`
-Expected: PASS. 7 ipCheck tests + 13 explain tests.
+Expected: PASS. 7 ipCheck tests + 15 explain tests.
 
 - [ ] **Step 6: Commit**
 
@@ -886,7 +886,7 @@ module.exports = {
 - [ ] **Step 4: Run the test and verify it passes**
 
 Run: `npm test`
-Expected: PASS. 7 ipCheck + 13 explain + 17 query tests.
+Expected: PASS. 7 ipCheck + 15 explain + 17 query tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1359,17 +1359,24 @@ function registerTools(server, db) {
 module.exports = { registerTools };
 ```
 
+- [ ] **Step 0: Install the dependencies**
+
+`tools.js` requires `zod` at module load, so the dependencies land here rather
+than in Task 6:
+
+```bash
+npm install @modelcontextprotocol/sdk@^1.30.0 zod@^4
+```
+
 - [ ] **Step 2: Verify the module loads**
 
 Run: `node -e "console.log(typeof require('./server/mcp/tools').registerTools)"`
 Expected: `function`
 
-Note: this requires `@modelcontextprotocol/sdk` and `zod`, installed in Task 6. If this step fails with `Cannot find module 'zod'`, run Task 6 Step 1 first, then return here.
-
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/mcp/tools.js
+git add package.json package-lock.json server/mcp/tools.js
 git commit -m "Add find, aggregate, count and describe_collection tools
 
 The explained command and the executed command are built from one object, so
@@ -1395,11 +1402,12 @@ count with an empty filter returns the metadata estimate rather than scanning."
 - Consumes: `registerTools` (Task 5), `INSTRUCTIONS` (Task 4).
 - Produces: an Express `Router` mounted at `/mcp`.
 
-- [ ] **Step 1: Install the dependencies**
+- [ ] **Step 1: Confirm the dependencies are present**
 
-```bash
-npm install @modelcontextprotocol/sdk@^1.30.0 zod@^4
-```
+Installed in Task 5 Step 0. Verify rather than reinstall:
+
+Run: `node -e "require('@modelcontextprotocol/sdk/server/mcp.js'); require('zod'); console.log('deps ok')"`
+Expected: `deps ok`
 
 - [ ] **Step 2: Bump the base image**
 

@@ -20,3 +20,6 @@ Thumbs.db
 
 # Scratch
 *.bak
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
