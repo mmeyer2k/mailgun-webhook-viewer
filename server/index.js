@@ -29,20 +29,16 @@ app.use('/api', apiRoutes);
 const PORT = process.env.PORT || 3000;
 
 // Read-only MCP endpoint for AI agents. Below the IP gate, so it is reachable
-// only from the private/Tailscale ranges. The Host allowlist must name every
-// host:port a client will use; only the localhost forms are built in.
-const mcpAllowedHosts = mcpRouter.defaultAllowedHosts(PORT);
-app.use('/mcp', mcpRouter(() => mongoose.connection.db, { allowedHosts: mcpAllowedHosts }));
+// only from the private/Tailscale ranges; the router itself refuses anything
+// carrying an Origin header, which is what keeps a browser on those ranges
+// from lending its position to a page it loaded.
+app.use('/mcp', mcpRouter(() => mongoose.connection.db));
 
 // Every route and middleware above is registered unconditionally, so requiring
 // this module yields the fully wired app — which is what test/ipCheck.test.js
 // asserts the mount ORDER of. Only the side effects below belong to running as
 // a program: connecting, listening, and warning on the console.
 if (require.main === module) {
-  if (!process.env.MCP_ALLOWED_HOSTS) {
-    console.warn('MCP_ALLOWED_HOSTS is not set: /mcp will accept only localhost Host headers.');
-  }
-
   // Connect to MongoDB
   mongoose.connect(process.env.MONGODB_URI, {
       // These options were added by Cursor for docker compatibility ...?

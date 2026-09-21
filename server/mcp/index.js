@@ -8,20 +8,6 @@ const rpcError = (res, status, message) =>
   res.status(status).json({ jsonrpc: '2.0', error: { code: -32000, message }, id: null });
 
 /**
- * Host values the transport will accept. The check is an exact string match
- * against the Host header, port included, so every name a client might type
- * into its MCP config has to be listed. Localhost forms are always present so
- * development works; everything else comes from MCP_ALLOWED_HOSTS.
- */
-function defaultAllowedHosts(port, env = process.env) {
-  const fromEnv = (env.MCP_ALLOWED_HOSTS || '')
-    .split(',')
-    .map((h) => h.trim())
-    .filter(Boolean);
-  return [...new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, ...fromEnv])];
-}
-
-/**
  * Express router exposing the read-only MCP endpoint.
  *
  * Stateless: a fresh McpServer and transport are built per request
@@ -32,30 +18,29 @@ function defaultAllowedHosts(port, env = process.env) {
  * Access control is the IP gate in server/index.js, which this router is
  * mounted below. That gate checks the TCP peer — and in a browser-borne attack
  * the peer is a legitimate user on the allowed network, lending their position
- * to a page they happened to load. Two checks here close that:
+ * to a page they happened to load. The Origin refusal below closes that.
  *
- *  - Any request carrying an Origin header is refused. Browsers send Origin on
- *    every POST, including same-origin ones after a DNS rebind; real MCP
- *    clients never send it.
- *  - The Host header must match an allowlisted value, enforced by the SDK's
- *    DNS-rebinding protection. After a rebind the browser's Host is the
- *    attacker's domain, not ours.
+ * There is deliberately NO Host allowlist. The SDK's DNS-rebinding protection
+ * is an exact string match, port included, against every hostname a client
+ * might type; keeping it correct meant enumerating tailnet names in an env var,
+ * and the first name anyone forgot returned a bare 403 that MCP clients report
+ * as an auth failure. Two things already cover the attack it defends against:
+ * tailscale serve terminates TLS for the single MagicDNS name it holds a cert
+ * for, so a rebound https page fails the handshake before reaching us; and a
+ * rebound page's POST still carries Origin, which is refused below.
  *
  * @param {() => import('mongodb').Db} getDb resolves the raw driver Db lazily,
  *   so the router can be mounted before MongoDB finishes connecting.
- * @param {{ allowedHosts: string[] }} options
  */
-function mcpRouter(getDb, { allowedHosts }) {
-  if (!Array.isArray(allowedHosts) || allowedHosts.length === 0) {
-    throw new Error('mcpRouter requires a non-empty allowedHosts list');
-  }
-
+function mcpRouter(getDb) {
   const router = express.Router();
 
-  // Done here rather than through the transport's `allowedOrigins`: that option
-  // is a value allowlist which no-ops when the list is empty, so it can say
-  // "only these origins" but not "no Origin at all". Moving this check into
-  // `allowedOrigins: []` would silently disable it.
+  // The whole of this endpoint's browser defence. Done here rather than through
+  // the transport's `allowedOrigins`: that option is a value allowlist which
+  // no-ops when the list is empty, so it can say "only these origins" but not
+  // "no Origin at all". Moving this check into `allowedOrigins: []` would
+  // silently disable it. Real MCP clients never send Origin; browsers always
+  // do on a POST, including a same-origin one after a DNS rebind.
   router.use((req, res, next) => {
     if (req.headers.origin !== undefined) {
       return rpcError(res, 403, 'Requests with an Origin header are not accepted on this endpoint.');
@@ -77,11 +62,7 @@ function mcpRouter(getDb, { allowedHosts }) {
     if (!db) return rpcError(res, 503, 'Database not connected yet. Retry shortly.');
     registerTools(server, db);
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableDnsRebindingProtection: true,
-      allowedHosts,
-    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       transport.close();
       server.close();
@@ -109,4 +90,3 @@ function mcpRouter(getDb, { allowedHosts }) {
 }
 
 module.exports = mcpRouter;
-module.exports.defaultAllowedHosts = defaultAllowedHosts;

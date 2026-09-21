@@ -79,12 +79,8 @@ const IXSCAN_EXPLAIN = {
 function withApp(db, fn) {
   const app = express();
   app.use(express.json());
-  return withListening(app, (base, port) => {
-    // Mounted after listen so the allowlist can name the real port. Express
-    // accepts routes added at any time.
-    app.use('/mcp', mcpRouter(() => db, { allowedHosts: [`127.0.0.1:${port}`] }));
-    return fn(`${base}/mcp`);
-  });
+  app.use('/mcp', mcpRouter(() => db));
+  return withListening(app, (base) => fn(`${base}/mcp`));
 }
 
 // Responses come back as SSE even in stateless mode, so pull the JSON out of
@@ -265,21 +261,30 @@ test('a request carrying an Origin header is refused before any database call', 
   assert.strictEqual(db.commandCalls.length, 0);
 });
 
-test('a request whose Host is not allowlisted is refused (DNS rebinding)', async () => {
-  const db = stubDb({ explainResult: IXSCAN_EXPLAIN });
-  const out = await withApp(db, (url) => rawPost(url, init, { Host: 'evil.example' }));
-  assert.strictEqual(out.status, 403);
-  assert.match(out.text, /Host/);
-  assert.strictEqual(db.commandCalls.length, 0);
+// The Host allowlist is gone: tailscale serve terminates TLS for the one
+// MagicDNS name it holds a cert for, and every hostname a client legitimately
+// reaches this app by would have had to be enumerated in an env var — which is
+// exactly the misconfiguration that made the endpoint unusable in production.
+test('a request with an unrecognised Host is served', async () => {
+  const out = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }),
+    (url) => rawPost(url, init, { Host: 'anything.example' }));
+  assert.strictEqual(out.status, 200);
+  assert.match(out.text, /unix SECONDS/);
 });
 
-test('defaultAllowedHosts always includes the localhost forms and merges the env list', () => {
-  const hosts = mcpRouter.defaultAllowedHosts(3000, { MCP_ALLOWED_HOSTS: 'mg.tailnet.ts.net:3000, 100.64.1.2:3000' });
-  assert.deepStrictEqual(hosts, [
-    '127.0.0.1:3000', 'localhost:3000', '[::1]:3000',
-    'mg.tailnet.ts.net:3000', '100.64.1.2:3000',
-  ]);
-  assert.deepStrictEqual(mcpRouter.defaultAllowedHosts(3000, {}), ['127.0.0.1:3000', 'localhost:3000', '[::1]:3000']);
+// With the Host check removed the Origin refusal is the ONLY thing standing
+// between a rebound browser and this endpoint, so pin the shape that attack
+// actually takes: after a rebind the page believes it is same-origin, and a
+// same-origin POST still carries Origin. Weaken this and rebinding is live.
+test('a rebound same-origin POST is still refused by the Origin check', async () => {
+  const db = stubDb({ explainResult: IXSCAN_EXPLAIN });
+  const out = await withApp(db, (url) => rawPost(url, init, {
+    Host: 'evil.example',
+    Origin: 'http://evil.example',
+  }));
+  assert.strictEqual(out.status, 403);
+  assert.match(out.text, /Origin/);
+  assert.strictEqual(db.commandCalls.length, 0);
 });
 
 test('a request before MongoDB is connected gets a 503, not a crash', async () => {
@@ -291,9 +296,6 @@ test('a request before MongoDB is connected gets a 503, not a crash', async () =
   assert.match(out.raw, /not connected/);
 });
 
-test('the router refuses to construct without an allowlist', () => {
-  assert.throws(() => mcpRouter(() => ({}), { allowedHosts: [] }), /allowedHosts/);
-});
 
 test('aggregate runs an index-backed pipeline and returns documents', async () => {
   const out = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }), async (url) => {

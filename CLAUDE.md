@@ -53,10 +53,21 @@ only target `webhooks` or `messages`. Results are drained one document at a
 time to a byte and count budget, never `toArray()`'d, because this process also
 hosts webhook ingestion.
 
-The router refuses any request with an `Origin` header and enforces a Host
-allowlist (`MCP_ALLOWED_HOSTS`). Both exist because the IP gate checks the TCP
-peer, and a browser on the allowed network lends that position to any page it
-loads. Global CORS was removed for the same reason.
+The router refuses any request carrying an `Origin` header. That check exists
+because the IP gate checks the TCP peer, and a browser on the allowed network
+lends that position to any page it loads; real MCP clients never send `Origin`,
+browsers always do on a POST. Global CORS was removed for the same reason.
+
+There is deliberately **no Host allowlist**. The SDK's DNS-rebinding protection
+was enabled here and matched the `Host` header as an exact string, port
+included, against a list built from `MCP_ALLOWED_HOSTS` — so every tailnet name
+a client might type had to be enumerated, and the first one missing returned a
+bare `403` that MCP clients surface as an auth failure. It was removed because
+`tailscale serve` only terminates TLS for the single MagicDNS name it holds a
+cert for (a rebound `https` page fails the handshake before reaching Express),
+and a rebound page's POST still carries `Origin`. If the app is ever exposed on
+a plain-HTTP port that `tailscale serve` does not front, the `Origin` check is
+the only remaining guard — do not weaken it.
 
 ### Access control
 
