@@ -107,14 +107,20 @@ test('the real app mounts /webhook above the gate and everything else below it',
   const names = app._router.stack.map((layer) => {
     if (layer.name === 'ipCheckMiddleware') return 'gate';
     if (layer.name === 'serveStatic') return 'static';
+    if (layer.regexp && layer.regexp.test('/moved')) return '/moved';
     if (layer.regexp && layer.regexp.test('/webhook')) return '/webhook';
     if (layer.regexp && layer.regexp.test('/api')) return '/api';
     if (layer.regexp && layer.regexp.test('/mcp')) return '/mcp';
     return null;
   }).filter(Boolean);
   const idx = (n) => names.indexOf(n);
-  for (const n of ['/webhook', 'gate', 'static', '/api', '/mcp']) assert.notStrictEqual(idx(n), -1, `${n} not mounted`);
+  for (const n of ['/webhook', '/moved', 'gate', 'static', '/api', '/mcp']) assert.notStrictEqual(idx(n), -1, `${n} not mounted`);
   assert.ok(idx('/webhook') < idx('gate'), 'webhook must be ABOVE the gate');
+  // The notice answers PUBLIC traffic, so it has to sit above the gate too —
+  // and because Tailscale's proxy mount is prefix-matching, it is what keeps
+  // every other public path from falling through to the gate, which passes
+  // anything arriving from a proxy.
+  assert.ok(names.lastIndexOf('/moved') < idx('gate'), 'the moved notice must be ABOVE the gate');
   // Express's own query/expressInit/jsonParser layers carry a catch-all
   // regexp that also matches '/webhook', so indexOf('/webhook') is 0 whatever
   // happens. lastIndexOf is the one that actually moves if the route is
