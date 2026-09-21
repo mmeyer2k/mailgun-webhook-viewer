@@ -1,9 +1,12 @@
 // "Connect MCP" button: copies a prompt the user pastes into Claude Code, which
 // then installs this server against itself.
 
-// Built from location.origin rather than a configured value: whatever host the
-// user browsed to is by definition on MCP_ALLOWED_HOSTS (it is the same Host
-// header the endpoint will check), so the URL is always one the server accepts.
+// Built from location.origin rather than a configured value, so the prompt
+// names whatever host this page was actually served on. That used to be
+// unsound: /mcp checked the Host header against MCP_ALLOWED_HOSTS while the
+// static files serving this very script did not, so the button happily handed
+// out a URL the endpoint answered with 403. The Host allowlist is gone and
+// location.origin is now genuinely the right source.
 function mcpInstallPrompt() {
     const url = `${window.location.origin}/mcp`;
     return `Add the Mailgun webhook archive as an MCP server, then verify it:

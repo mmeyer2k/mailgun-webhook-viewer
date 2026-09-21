@@ -28,9 +28,8 @@ executed; re-call with `allowFullScan: true` to override.
 If a client reports `406 Not Acceptable`, it is not sending
 `Accept: application/json, text/event-stream`, which the protocol requires.
 
-**`MCP_ALLOWED_HOSTS` is required for anything but localhost.** The endpoint
-enforces a Host allowlist (exact match, port included) as DNS-rebinding
-protection, and refuses any request carrying an `Origin` header. List every
-host:port your clients will type, e.g.
-`MCP_ALLOWED_HOSTS=mailgun.your-tailnet.ts.net:3000,100.64.12.34:3000`. A `403`
-mentioning `Host` means the value the client used is not on the list.
+The endpoint refuses any request carrying an `Origin` header, which is what
+keeps a browser on the allowed network from lending its position to a page it
+loaded. Real MCP clients never send one. There is no Host allowlist to
+configure: reach the endpoint by whatever tailnet name or IP the app is served
+on.
