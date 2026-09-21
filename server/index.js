@@ -5,6 +5,7 @@ const path = require('path');
 const ipCheckMiddleware = require('./middleware/ipCheck');
 
 const webhookRoutes = require('./routes/webhook');
+const movedRouter = require('./routes/moved');
 const apiRoutes = require('./routes/api');
 const mcpRouter = require('./mcp');
 
@@ -18,6 +19,13 @@ app.use(express.json());
 // mounted ABOVE the gate so that position, not HTTP method, is what keeps it
 // public.
 app.use('/webhook', webhookRoutes);
+
+// The "this address has moved" notice for the public origin, which now carries
+// only /webhook. Mounted ABOVE the gate because it has to answer public
+// traffic, and it is the reason public traffic cannot reach anything else: the
+// proxy mount in front of it is prefix-matching, so every public path lands
+// here. See server/routes/moved.js. Unset VIEWER_BASE_URL leaves it a 404.
+app.use('/moved', movedRouter(process.env.VIEWER_BASE_URL));
 
 // Everything below this line is gated to private/Tailscale ranges, for EVERY
 // method. This previously read app.get('/*', ...), which covered GET only.

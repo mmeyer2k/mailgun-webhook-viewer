@@ -83,6 +83,17 @@ Mailgun delivers over the internet. Its only protection is the signature check.
 Any new route mounted below the gate is automatically covered; a new route
 mounted above it is not.
 
+`/moved` (`server/routes/moved.js`) is the only other route above the gate. It
+renders a "this address has moved" notice pointing at `VIEWER_BASE_URL`, for
+deployments where the public origin carries just the webhook endpoint and the
+viewer lives somewhere reachable only privately. Three things about it are
+load-bearing: it is mounted with `app.use`, not `app.get`, so it answers every
+path beneath it rather than letting one fall through to the gate; it renders a
+link and never a redirect, and takes its target from configuration rather than
+the request's `Host` header, because a public endpoint that trusts `Host` is an
+open redirect; and no URL is hardcoded, so nothing about the deployment lives in
+this repo. Unset `VIEWER_BASE_URL` and it 404s.
+
 The gate reads `req.socket.remoteAddress` and deliberately ignores
 `X-Forwarded-For`. Reading that header is how this check used to work, and it
 meant anyone who could reach the port could forge a private address. There is
