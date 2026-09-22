@@ -3,17 +3,27 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Without this the containers do not come back after a host reboot or a
+    # docker restart, and webhook ingestion stops silently. Mailgun retries for
+    # a while and then gives up, and dropped events cannot be recovered.
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - MONGODB_URI=mongodb://mongodb:27017/mailgun-webhooks
       - PORT=3000
+    # Read on the HOST by compose and injected as environment, rather than
+    # bind-mounted into the container. The container runs unprivileged (see
+    # Dockerfile) and would otherwise need read access to the secrets file;
+    # this way .env can stay 0600 and root-owned. Values here are overridden by
+    # the `environment:` block above, which is why MONGODB_URI still points at
+    # the compose network rather than whatever .env says.
+    env_file: .env
     depends_on:
       - mongodb
     volumes:
       - ./public:/usr/src/app/public
       - ./server:/usr/src/app/server
-      - ./.env:/usr/src/app/.env
     command: npm run dev
     logging: &logging
       driver: "json-file"
@@ -23,14 +33,21 @@ services:
 
   mongodb:
     image: mongo:latest
+    restart: unless-stopped
     logging: *logging
-    ports:
-      - "27017:27017"
+    # Deliberately NOT published to the host. The app reaches MongoDB over the
+    # compose network as mongodb:27017; publishing it would put an unauthed
+    # database (no users are defined) on every host interface. To poke at it:
+    #   docker compose exec mongodb mongosh mailgun-webhooks
     volumes:
       - mongodb_data:/data/db
 
+  # Dev only — `docker compose --profile dev up`. Not started by a plain
+  # `docker compose up`, so it never appears in production, where it would be
+  # an unauthenticated-by-default admin UI onto the whole archive.
   mongo-express:
     image: mongo-express:latest
+    profiles: ["dev"]
     logging: *logging
     ports:
       - "127.0.0.1:8081:8081"
@@ -44,4 +61,4 @@ services:
       - mongodb
 
 volumes:
-  mongodb_data: 
+  mongodb_data:

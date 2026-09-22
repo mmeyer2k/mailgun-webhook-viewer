@@ -5,7 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-docker compose up          # Full stack: app (:3000), MongoDB (:27017), mongo-express (127.0.0.1:8081, admin/pass)
+docker compose up               # app (:3000) + MongoDB (compose network only, not published)
+docker compose --profile dev up # also starts mongo-express (127.0.0.1:8081, admin/pass)
+docker compose exec mongodb mongosh mailgun-webhooks   # a shell on the database
 npm run dev                # App only, with nodemon reload (requires a reachable MONGODB_URI)
 npm start                  # App only, no reload
 
@@ -15,7 +17,9 @@ node scripts/migrate-indexes.js --apply    # create new indexes, then drop dead 
 npm test                   # node --test; no framework, no build step
 ```
 
-Docker Compose bind-mounts `./server`, `./public`, and `./.env`, so edits reload live inside the container. Copy `.env.sample` to `.env` first; `MAILGUN_API_KEY` doubles as both the webhook signing key and the HTTP Basic password used to fetch stored message bodies.
+Docker Compose bind-mounts `./server` and `./public`, so edits reload live inside the container. Copy `.env.sample` to `.env` first; `MAILGUN_API_KEY` doubles as both the webhook signing key and the HTTP Basic password used to fetch stored message bodies.
+
+`.env` is **not** bind-mounted — compose reads it on the host and injects the values as environment (`env_file:`). The app container runs as the unprivileged `node` user (uid 1000), so a mounted secrets file would have to be readable by it; this way `.env` stays `0600` and root-owned. The `environment:` block still wins over `env_file`, which is why `MONGODB_URI` points at the compose network whatever `.env` says. MongoDB is not published to the host and no database users are defined, so publishing it would put an unauthenticated database on every interface; both services set `restart: unless-stopped` so ingestion survives a reboot.
 
 There is no linter or build step; `npm test` runs Node's built-in test runner.
 
