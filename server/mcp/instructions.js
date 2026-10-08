@@ -18,9 +18,9 @@ This server exposes a READ-ONLY view of a Mailgun webhook archive in MongoDB.
 
 # Scale
 
-The \`webhooks\` collection holds roughly 100 MILLION documents. Ordinary-looking
-queries take multiple seconds or time out. Call \`describe_collection\` first to
-see the available indexes, and write queries that an index can serve.
+The \`webhooks\` collection can hold millions of documents. Ordinary-looking
+queries can take multiple seconds or time out. Call \`describe_collection\` first
+to see the available indexes, and write queries that an index can serve.
 
 Every query is planned before it runs. If the plan is a collection scan or a
 full index scan, the tool returns a warning INSTEAD of results, with
