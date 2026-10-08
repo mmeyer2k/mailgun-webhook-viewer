@@ -5,8 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-docker compose up               # app (:3000) + MongoDB (compose network only, not published)
-docker compose --profile dev up # also starts mongo-express (127.0.0.1:8081, admin/pass)
+docker compose up          # app (:3000) + MongoDB (compose network only, not published)
 docker compose exec mongodb mongosh mailgun-webhooks   # a shell on the database
 npm run dev                # App only, with nodemon reload (requires a reachable MONGODB_URI)
 npm start                  # App only, no reload
