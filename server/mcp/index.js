@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -83,8 +84,17 @@ function mcpRouter(getDb) {
     }
   });
 
+  // The Connect MCP button hands out this URL, and people open it in a browser.
+  // Navigation asks for text/html; an MCP client's GET asks for
+  // text/event-stream and falls through to the 405 below. A top-level GET
+  // navigation sends no Origin, so this sits behind the same check as POST.
+  router.get('/', (req, res, next) => {
+    if (!/\btext\/html\b/.test(req.get('accept') || '')) return next();
+    res.sendFile(path.join(__dirname, '../../public/mcp.html'));
+  });
+
   // Stateless mode has no stream to resume and no session to delete.
-  router.all('/', (req, res) => rpcError(res, 405, 'Method not allowed. Use POST.'));
+  router.all('/',(req, res) => rpcError(res, 405, 'Method not allowed. Use POST.'));
 
   return router;
 }

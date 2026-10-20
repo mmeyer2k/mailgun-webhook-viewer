@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect MCP</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <!-- Absolute paths: GET /mcp serves this file, so relative ones would
+         resolve against /mcp rather than /mcp.html. -->
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="/" class="back-link">← Back to List</a>
+            <h1>Connect MCP</h1>
+        </div>
+
+        <p>This address is an MCP endpoint for Claude Code, not a web page. Add it from a terminal:</p>
+        <pre id="mcpCommand">claude mcp add --transport http mailgun /mcp</pre>
+
+        <p>Or paste this prompt into Claude Code and let it install and verify the server itself:</p>
+        <pre id="mcpPrompt"></pre>
+        <button onclick="copyMcpPrompt()">Copy prompt</button>
+    </div>
+    <div class="toast" id="mcpToast" role="status" aria-live="polite"></div>
+    <script src="/js/mcp-connect.js"></script>
+    <script>
+        document.getElementById('mcpCommand').textContent = mcpAddCommand();
+        document.getElementById('mcpPrompt').textContent = mcpInstallPrompt();
+    </script>
+</body>
+</html>
