@@ -7,17 +7,20 @@
 // static files serving this very script did not, so the button happily handed
 // out a URL the endpoint answered with 403. The Host allowlist is gone and
 // location.origin is now genuinely the right source.
+function mcpAddCommand() {
+    return `claude mcp add --transport http mailgun ${window.location.origin}/mcp`;
+}
+
 function mcpInstallPrompt() {
-    const url = `${window.location.origin}/mcp`;
     return `Add the Mailgun webhook archive as an MCP server, then verify it:
 
-1. Run: claude mcp add --transport http mailgun ${url}
+1. Run: ${mcpAddCommand()}
 2. Reconnect so the tools load, then call describe_collection on the
    webhooks collection and show me the indexes it reports.
 
 It's read-only and reachable only from our private/Tailscale network. It ships
 its own usage instructions in the MCP handshake — read those before querying;
-the collection holds ~100M documents and unindexed queries are refused, not run.
+unindexed queries are refused, not run.
 `;
 }
 
@@ -68,5 +71,5 @@ function showToast(message) {
 function copyMcpPrompt() {
     copyText(mcpInstallPrompt())
         .then(() => showToast('Copied — paste it into Claude Code'))
-        .catch(() => showToast(`Copy failed. Add it manually: ${window.location.origin}/mcp`));
+        .catch(() => showToast(`Copy failed. Open ${window.location.origin}/mcp in a browser for the setup instructions.`));
 }

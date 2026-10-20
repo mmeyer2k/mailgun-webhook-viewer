@@ -372,6 +372,22 @@ test('GET /mcp is 405', async () => {
   assert.strictEqual(status, 405);
 });
 
+test('a browser opening /mcp gets the setup page, not the 405', async () => {
+  // The Connect MCP button hands out this URL, and people paste it into a
+  // browser. Navigation asks for text/html; MCP clients never do.
+  const res = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }), (url) =>
+    fetch(url, { headers: { Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' } }));
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  assert.match(await res.text(), /claude mcp add/);
+});
+
+test('an MCP client GET asking for an event stream is still 405', async () => {
+  const status = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }), async (url) =>
+    (await fetch(url, { headers: { Accept: 'text/event-stream' } })).status);
+  assert.strictEqual(status, 405);
+});
+
 test('skip above the cap is rejected by schema', async () => {
   // skip() walks every key it skips; the cap is what keeps a deep page from
   // being a scan by another name.
