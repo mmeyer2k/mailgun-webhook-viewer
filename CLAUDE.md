@@ -38,7 +38,13 @@ Search state round-trips through the URL: the list page writes filters as query 
 **Agent queries** (`server/mcp/`, mounted at `POST /mcp`) — a read-only MCP
 endpoint. Four tools (`find`, `aggregate`, `count`, `describe_collection`) pass
 queries to the raw driver; `server/mcp/instructions.js` carries the schema
-guidance the agent receives at `initialize`.
+guidance the agent receives at `initialize`. A fifth, `get_message`, reads one
+stored email by message-id and returns its body as paged text
+(`server/mcp/message.js`). It exists because `find` can't usefully do this:
+bodies are excluded unless projected, and `collectBounded` drops any document
+over its byte budget whole, so a typical HTML email came back as zero rows. It
+skips the plan gate because it only ever issues an exact string match on the
+`messageId` index.
 
 Every query is planned with a `queryPlanner` explain before it runs, and
 `server/mcp/explain.js` classifies the plan by the **index bounds on the leading

@@ -17,7 +17,8 @@ Or click **Connect MCP** on the web UI: it copies a ready-made prompt — with t
 URL already filled in from the host you are browsing — that you paste into
 Claude Code to have it install and verify the server itself.
 
-Tools: `describe_collection`, `find`, `count`, `aggregate`. Usage guidance —
+Tools: `describe_collection`, `find`, `count`, `aggregate`, and `get_message`,
+which reads one stored email's body as text by message-id. Usage guidance —
 the schema traps, which queries are index-backed — is delivered to the agent
 automatically in the MCP `instructions` block; there is no separate doc to read.
 
