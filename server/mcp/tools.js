@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { analyzePlan } = require('./explain');
 const { TOOL_DESCRIPTIONS } = require('./instructions');
+const { MESSAGE_LIMITS, normalizeMessageId, renderMessage } = require('./message');
 const {
   COLLECTIONS,
   DEFAULTS,
@@ -183,6 +184,42 @@ function registerTools(server, db) {
         return errorResult(err.message);
       }
     }
+  );
+
+  // No plan gate: the only query this tool can issue is an exact string match
+  // on the messageId index, which cannot scan. The caller supplies a value,
+  // never a filter, so there is no operator to guard either.
+  server.registerTool(
+    'get_message',
+    {
+      description: TOOL_DESCRIPTIONS.get_message,
+      inputSchema: {
+        messageId: z.string().min(1),
+        format: z.enum(['text', 'html']).optional(),
+        offset: z.number().int().nonnegative().optional(),
+        maxChars: z.number().int().positive().max(MESSAGE_LIMITS.maxChars).optional(),
+      },
+    },
+    async (args) => withSlot(async () => {
+      try {
+        const messageId = normalizeMessageId(args.messageId);
+        const doc = await db.collection('messages')
+          .findOne({ messageId }, { maxTimeMS: DEFAULTS.maxTimeMS });
+        if (!doc) {
+          return jsonResult({
+            found: false,
+            messageId,
+            note:
+              'No stored body for this message-id. A body is saved only when some ' +
+              'event for the message carried a storage URL (usually `accepted`), so ' +
+              'most messages have none. Its events may still be in `webhooks`.',
+          });
+        }
+        return jsonResult(renderMessage(doc, args));
+      } catch (err) {
+        return errorResult(err.message);
+      }
+    })
   );
 
   server.registerTool(
