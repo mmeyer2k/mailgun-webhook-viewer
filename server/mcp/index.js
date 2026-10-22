@@ -5,6 +5,11 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { INSTRUCTIONS } = require('./instructions');
 const { registerTools } = require('./tools');
 
+// The shape of a Chrome (and Edge, Brave) extension origin: a 32-character
+// ID in the a-p alphabet. No web page can present one — the browser sets
+// Origin — so matching the shape cannot let a page in.
+const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}$/;
+
 const rpcError = (res, status, message) =>
   res.status(status).json({ jsonrpc: '2.0', error: { code: -32000, message }, id: null });
 
@@ -42,9 +47,35 @@ function mcpRouter(getDb) {
   // "no Origin at all". Moving this check into `allowedOrigins: []` would
   // silently disable it. Real MCP clients never send Origin; browsers always
   // do on a POST, including a same-origin one after a DNS rebind.
+  //
+  // The one exception is browser extensions. Chrome stamps an extension's
+  // requests with Origin: chrome-extension://<id> and the extension cannot
+  // omit it. No web page can present that origin, and a content script sends
+  // its page's origin rather than the extension's, so the exemption reaches
+  // extension pages and workers only — which, given host permissions, could
+  // already read /api without any Origin check at all. Do NOT widen this to
+  // page origins: an allowed page origin hands /mcp to every script on that
+  // page, including the viewer's own (CLAUDE.md, "Known rough edges").
   router.use((req, res, next) => {
-    if (req.headers.origin !== undefined) {
+    const origin = req.headers.origin;
+    if (origin === undefined) return next();
+    if (!EXTENSION_ORIGIN.test(origin)) {
       return rpcError(res, 403, 'Requests with an Origin header are not accepted on this endpoint.');
+    }
+
+    res.vary('Origin');
+    res.set('Access-Control-Allow-Origin', origin);
+    if (req.method === 'OPTIONS') {
+      res.set({
+        'Access-Control-Allow-Methods': 'POST',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id',
+        'Access-Control-Max-Age': '600',
+      });
+      // Chrome's private-network preflight: this server is on a tailnet address.
+      if (req.headers['access-control-request-private-network'] === 'true') {
+        res.set('Access-Control-Allow-Private-Network', 'true');
+      }
+      return res.sendStatus(204);
     }
     next();
   });

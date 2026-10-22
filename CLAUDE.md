@@ -67,6 +67,16 @@ because the IP gate checks the TCP peer, and a browser on the allowed network
 lends that position to any page it loads; real MCP clients never send `Origin`,
 browsers always do on a POST. Global CORS was removed for the same reason.
 
+The one exemption is browser extensions: an Origin matching
+`chrome-extension://<32-char id>` is served, with CORS headers and a preflight
+answer for that origin (Pedro's Agent+ extension needs this — Chrome stamps its
+requests with its own Origin and it cannot omit it). It is safe because no web
+page can present an extension origin and a content script sends its page's
+origin instead; an extension with host permissions could already read `/api`,
+which has no Origin check at all. Never widen it to page origins or `*`: an
+allowed page origin hands `/mcp` to every script on that page, including the
+viewer's own (see the stored XSS below), and to any site a tailnet user visits.
+
 There is deliberately **no Host allowlist**. The SDK's DNS-rebinding protection
 was enabled here and matched the `Host` header as an exact string, port
 included, against a list built from `MCP_ALLOWED_HOSTS` — so every tailnet name
