@@ -108,12 +108,12 @@ async function rpc(url, body) {
 
 // fetch strips forbidden headers such as Host and Origin, so the negative
 // header tests need to drop down to node:http to actually send them.
-function rawPost(url, body, extraHeaders) {
+function rawPost(url, body, extraHeaders, method = 'POST') {
   const u = new URL(url);
-  const payload = JSON.stringify(body);
+  const payload = body === undefined ? '' : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request({
-      hostname: u.hostname, port: u.port, path: u.pathname, method: 'POST',
+      hostname: u.hostname, port: u.port, path: u.pathname, method,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
@@ -123,7 +123,7 @@ function rawPost(url, body, extraHeaders) {
     }, (res) => {
       let text = '';
       res.on('data', (c) => { text += c; });
-      res.on('end', () => resolve({ status: res.statusCode, text }));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
     });
     req.on('error', reject);
     req.end(payload);
@@ -479,4 +479,61 @@ test('get_message only ever matches messageId as a string', async () => {
   const out = await getMessage(db, { messageId: { $ne: null } });
   assert.ok(out.error || out.result.isError, 'a non-string id must be rejected');
   assert.strictEqual(db.findOneCalls.length, 0);
+});
+
+// Chrome stamps an extension's own requests with Origin: chrome-extension://<id>
+// and gives the extension no way to omit it. A web page cannot present that
+// origin, so allowing extensions does not reopen the browser hole the Origin
+// refusal closes.
+const EXT = 'chrome-extension://khinniomcldlhkegplffajodoklaecjm';
+const OTHER_EXT = 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const preflight = (url, origin, extra = {}) => rawPost(url, undefined, {
+  Origin: origin,
+  'Access-Control-Request-Method': 'POST',
+  'Access-Control-Request-Headers': 'content-type',
+  ...extra,
+}, 'OPTIONS');
+
+test('an extension origin is served, with CORS headers for that origin', async () => {
+  for (const origin of [EXT, OTHER_EXT]) {
+    const out = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }),
+      (url) => rawPost(url, init, { Origin: origin }));
+    assert.strictEqual(out.status, 200, origin);
+    assert.match(out.text, /unix SECONDS/);
+    assert.strictEqual(out.headers['access-control-allow-origin'], origin);
+    assert.match(out.headers.vary, /Origin/);
+  }
+});
+
+test('the CORS preflight is answered for an extension origin', async () => {
+  const out = await withApp(stubDb({ explainResult: IXSCAN_EXPLAIN }),
+    (url) => preflight(url, EXT, { 'Access-Control-Request-Private-Network': 'true' }));
+  assert.strictEqual(out.status, 204);
+  assert.strictEqual(out.headers['access-control-allow-origin'], EXT);
+  assert.match(out.headers['access-control-allow-methods'], /POST/);
+  assert.match(out.headers['access-control-allow-headers'], /Content-Type/i);
+  // The server sits on a tailnet (private) address.
+  assert.strictEqual(out.headers['access-control-allow-private-network'], 'true');
+});
+
+test('page origins and lookalikes are still refused, preflight included', async () => {
+  // Allowing a page origin would hand /mcp to any script running on it — and
+  // the viewer itself has a known stored-XSS.
+  const db = stubDb({ explainResult: IXSCAN_EXPLAIN });
+  for (const origin of [
+    'http://evil.example',
+    'https://chrome-extension.evil.example',
+    'chrome-extension://khinniomcldlhkegplffajodoklaecjm.evil.example',
+    'chrome-extension://',
+    'chrome://settings',
+    'null',
+  ]) {
+    const post = await withApp(db, (url) => rawPost(url, init, { Origin: origin }));
+    assert.strictEqual(post.status, 403, `${origin} POST`);
+    assert.strictEqual(post.headers['access-control-allow-origin'], undefined);
+    const pre = await withApp(db, (url) => preflight(url, origin));
+    assert.strictEqual(pre.status, 403, `${origin} preflight`);
+    assert.strictEqual(pre.headers['access-control-allow-origin'], undefined);
+  }
+  assert.strictEqual(db.commandCalls.length, 0);
 });
