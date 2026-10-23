@@ -49,9 +49,6 @@ app.use('/mcp', mcpRouter(() => mongoose.connection.db));
 if (require.main === module) {
   // Connect to MongoDB
   mongoose.connect(process.env.MONGODB_URI, {
-      // These options were added by Cursor for docker compatibility ...?
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
     serverSelectionTimeoutMS: 5000,
     retryWrites: true,
     // Mongoose otherwise issues createIndex for every declared index on every

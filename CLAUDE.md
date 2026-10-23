@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 docker compose up          # app (:3000) + MongoDB (compose network only, not published)
 docker compose exec mongodb mongosh mailgun-webhooks   # a shell on the database
-npm run dev                # App only, with nodemon reload (requires a reachable MONGODB_URI)
+npm run dev                # App only, with `node --watch` reload (requires a reachable MONGODB_URI)
 npm start                  # App only, no reload
 
 node scripts/migrate-indexes.js            # dry run: print the index plan
